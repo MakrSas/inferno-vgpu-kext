@@ -169,3 +169,40 @@ jobs:
           xcodebuild -showsdks || true
           ls /Library/Developer/KDKs 2>&1 || echo "no /Library/Developer/KDKs"
           softwareupdate --list 2>&1 | head -30 || true
+
+  iokit-class-probe:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile a real IOService subclass against macOS SDK's Kernel.framework, arm64e-ios target
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out3
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          KHDRS="$SDK/System/Library/Frameworks/Kernel.framework/Versions/A/Headers"
+          ls "$KHDRS/IOKit" | head -20
+          clang++ -target arm64e-apple-ios14.0 -mkernel -fapple-kext \
+            -fno-exceptions -fno-rtti -std=gnu++17 -O0 \
+            -I"$KHDRS" \
+            -c src/InfernoVGPUHello.cpp -o out3/InfernoVGPUHello.o
+          file out3/InfernoVGPUHello.o
+
+      - name: Symbol table + section layout (if compile succeeded)
+        if: always()
+        run: |
+          set -x
+          [ -f out3/InfernoVGPUHello.o ] || { echo "no object produced"; exit 0; }
+          nm -m out3/InfernoVGPUHello.o
+          echo "--- otool -lv ---"
+          otool -lv out3/InfernoVGPUHello.o
+          echo "--- relocations ---"
+          otool -r out3/InfernoVGPUHello.o
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iokit-class-object
+          path: out3/
+          if-no-files-found: warn
