@@ -129,3 +129,43 @@ jobs:
           name: kmod-hello-object
           path: out2/
           if-no-files-found: warn
+
+  iokit-headers-probe:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Look for Kernel.framework (IOService.h etc) on macOS SDK
+        run: |
+          set -x
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          echo "SDK=$SDK"
+          find "$SDK" -iname "IOService.h" 2>/dev/null
+          find "$SDK" -iname "Kernel.framework" -maxdepth 6 2>/dev/null
+          echo "--- IOKit.framework (userspace, NOT what we need for a kext) ---"
+          find "$SDK" -iname "IOKit.framework" -maxdepth 6 2>/dev/null
+
+      - name: Look on iphoneos SDK too, just in case
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK=$SDK"
+          find "$SDK" -iname "IOService.h" 2>/dev/null
+          find "$SDK" -iname "Kernel.framework" -maxdepth 6 2>/dev/null
+
+      - name: Search the whole Xcode.app for Kernel.framework anywhere (KDK, DriverKit, etc)
+        run: |
+          set -x
+          XC=$(xcode-select -p)
+          echo "Xcode path=$XC"
+          find "$XC" -iname "IOService.h" 2>/dev/null | head -20
+          find "$XC" -iname "Kernel.framework" 2>/dev/null | head -20
+          echo "--- DriverKit (the modern replacement -- different API, not IOKit kext C++ ABI) ---"
+          find "$XC" -iname "*DriverKit*" -maxdepth 4 2>/dev/null | head -20
+
+      - name: Is there a Kernel Debug Kit installed or downloadable via xcodebuild?
+        run: |
+          set -x
+          xcodebuild -showsdks || true
+          ls /Library/Developer/KDKs 2>&1 || echo "no /Library/Developer/KDKs"
+          softwareupdate --list 2>&1 | head -30 || true
