@@ -1,0 +1,86 @@
+name: probe-arm64e-kernel-codegen
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+jobs:
+  probe:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain inventory
+        run: |
+          set -x
+          sw_vers
+          xcodebuild -version
+          xcode-select -p
+          xcodebuild -showsdks
+          clang --version
+          echo "--- iphoneos SDK path ---"
+          xcrun --sdk iphoneos --show-sdk-path
+          echo "--- macosx SDK path ---"
+          xcrun --sdk macosx --show-sdk-path
+
+      - name: Attempt A -- bare arm64e triple, no SDK, -mkernel
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out
+          clang -target arm64e-apple-ios14.0 -mkernel -fno-builtin \
+            -fno-exceptions -fno-rtti -Os \
+            -c src/hello.c -o out/attemptA.o
+          file out/attemptA.o
+          otool -hv out/attemptA.o
+
+      - name: Attempt B -- bare arm64e triple, no SDK, no -mkernel
+        continue-on-error: true
+        run: |
+          set -x
+          clang -target arm64e-apple-ios14.0 -fno-builtin \
+            -fno-exceptions -fno-rtti -Os \
+            -c src/hello.c -o out/attemptB.o
+          file out/attemptB.o
+          otool -hv out/attemptB.o
+
+      - name: Attempt C -- iphoneos SDK, -mkernel
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -arch arm64e -isysroot "$SDK" -mios-version-min=14.0 -mkernel \
+            -fno-builtin -fno-exceptions -fno-rtti -Os \
+            -c src/hello.c -o out/attemptC.o
+          file out/attemptC.o
+          otool -hv out/attemptC.o
+
+      - name: Attempt D -- macosx SDK cross-target arm64e-apple-ios14.0, -mkernel
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -mkernel \
+            -fno-builtin -fno-exceptions -fno-rtti -Os \
+            -c src/hello.c -o out/attemptD.o
+          file out/attemptD.o
+          otool -hv out/attemptD.o
+
+      - name: Summary of what actually produced valid ARM64E Mach-O
+        run: |
+          set -x
+          for f in out/attempt*.o; do
+            [ -f "$f" ] || continue
+            echo "=== $f ==="
+            file "$f" || true
+            otool -hv "$f" || true
+            echo
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-objects
+          path: out/
+          if-no-files-found: warn
