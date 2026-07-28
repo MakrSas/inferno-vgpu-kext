@@ -84,3 +84,48 @@ jobs:
           name: probe-objects
           path: out/
           if-no-files-found: warn
+
+  kmod-hello:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile kmod_hello.c (kernel context, no optimization for predictable codegen)
+        run: |
+          set -x
+          mkdir -p out2
+          clang -target arm64e-apple-ios14.0 -mkernel -fno-builtin \
+            -fno-exceptions -fno-rtti -O0 \
+            -c src/kmod_hello.c -o out2/kmod_hello.o
+          file out2/kmod_hello.o
+
+      - name: Symbol table (need exact offset of kmod_hello_start + g_marker)
+        run: |
+          set -x
+          nm -m out2/kmod_hello.o
+          echo "--- otool -lv (section layout / sizes) ---"
+          otool -lv out2/kmod_hello.o
+
+      - name: Disassembly (sanity check -- must be free of external branches/relocations)
+        run: |
+          set -x
+          otool -tvV out2/kmod_hello.o
+          echo "--- relocation entries (must be empty or only self-referential) ---"
+          otool -r out2/kmod_hello.o
+
+      - name: Raw __TEXT,__text bytes
+        run: |
+          set -x
+          otool -s __TEXT __text out2/kmod_hello.o
+
+      - name: Raw __DATA,__data bytes (if any)
+        run: |
+          set -x
+          otool -s __DATA __data out2/kmod_hello.o || echo "no __DATA,__data section"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kmod-hello-object
+          path: out2/
+          if-no-files-found: warn
