@@ -312,3 +312,32 @@ jobs:
           name: agx-direct-test-binary
           path: out7/
           if-no-files-found: warn
+
+  agx-bridge-dylib:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Compile inferno_agx_bridge.m into a real .dylib (InfernoGetAGXDevice() C export)"
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out8
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal -framework IOKit \
+            -dynamiclib -install_name /usr/lib/inferno_agx_bridge.dylib \
+            -o out8/inferno_agx_bridge.dylib src/userspace_test/inferno_agx_bridge.m
+          file out8/inferno_agx_bridge.dylib
+          otool -hv out8/inferno_agx_bridge.dylib
+          echo "--- exported symbols (need InfernoGetAGXDevice) ---"
+          nm -gU out8/inferno_agx_bridge.dylib
+          echo "--- linked libraries ---"
+          otool -L out8/inferno_agx_bridge.dylib
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agx-bridge-dylib
+          path: out8/
+          if-no-files-found: warn
