@@ -16,12 +16,56 @@
 #import <IOKit/IOKitLib.h>
 #import <Metal/Metal.h>
 #import <objc/runtime.h>
+#import <dispatch/dispatch.h>
 
 // Mirrors InfernoVGPUUserClient's external-method index 0 (sGetVersion) --
 // the only opcode proven end-to-end this session (inferno_vgpu_test). Real
 // command-encoding opcodes don't exist yet; committing just exercises this
 // same round trip as a functional heartbeat.
 static const uint32_t kInfernoExternalMethodPing = 0;
+// InfernoVGPUUserClient::kInfernoVGPUMethodComputeDispatch (InfernoVGPUHello.cpp)
+// -- real AIR->SPIR-V->Vulkan compute dispatch, proven end to end this
+// session via inferno_compute_dispatch_test.c. See inferno-vgpu.h for the
+// exact wire format this must match byte for byte.
+static const uint32_t kInfernoExternalMethodComputeDispatch = 1;
+
+// Builds and sends one INFERNO_VGPU_OP_COMPUTE_DISPATCH packet, returns the
+// buffer's post-dispatch bytes on success or nil on failure. `air` is
+// sanitized Metal AIR .ll TEXT (NOT a real .metallib container -- see
+// InfernoAGXNewLibraryWithData below for why real container parsing isn't
+// implemented yet), `bufferBytes`/`bufferLen` are the single bound buffer's
+// current contents (single buffer, always binding 0 -- see inferno-vgpu.h).
+static NSData *InfernoSendComputeDispatch(io_connect_t conn, NSData *air,
+                                            const void *bufferBytes, NSUInteger bufferLen)
+{
+    if (conn == IO_OBJECT_NULL || air == nil) {
+        return nil;
+    }
+    uint32_t airLen = (uint32_t)air.length;
+    uint32_t airPad = (4 - (airLen % 4)) % 4;
+    uint32_t bufLen = (uint32_t)bufferLen;
+    uint32_t bufPad = (4 - (bufLen % 4)) % 4;
+    uint32_t total = 4 + airLen + airPad + 4 + bufLen + bufPad;
+
+    NSMutableData *input = [NSMutableData dataWithLength:total];
+    uint8_t *p = (uint8_t *)input.mutableBytes;
+    uint32_t off = 0;
+    memcpy(p + off, &airLen, 4); off += 4;
+    memcpy(p + off, air.bytes, airLen); off += airLen + airPad;
+    memcpy(p + off, &bufLen, 4); off += 4;
+    if (bufLen > 0) {
+        memcpy(p + off, bufferBytes, bufLen);
+    }
+
+    uint8_t output[4096];
+    size_t outputSize = sizeof(output);
+    kern_return_t kr = IOConnectCallStructMethod(conn, kInfernoExternalMethodComputeDispatch,
+                                                  input.bytes, total, output, &outputSize);
+    if (kr != KERN_SUCCESS) {
+        return nil;
+    }
+    return [NSData dataWithBytes:output length:outputSize];
+}
 
 @interface InfernoCommandBuffer : NSObject
 @property (nonatomic, assign) io_connect_t vgpuConnection;
@@ -87,6 +131,13 @@ static const uint32_t kInfernoExternalMethodPing = 0;
 - (NSError *)error
 {
     return nil;
+}
+
+- (id)computeCommandEncoder
+{
+    InfernoComputeCommandEncoder *enc = [InfernoComputeCommandEncoder new];
+    enc.commandBuffer = self;
+    return enc;
 }
 
 @end
@@ -213,5 +264,145 @@ void InfernoInstallBufferFallback(id device)
     SEL sel = @selector(newBufferWithLength:options:);
     if (![device respondsToSelector:sel]) {
         class_addMethod(cls, sel, (IMP)InfernoAGXNewBufferWithLength, "@@:QQ");
+    }
+}
+
+// Real MTLFunction/MTLLibrary/MTLComputePipelineState: hold AIR bytes
+// through to dispatch time rather than compiling/linking anything ourselves
+// -- metal2vulkan (host side, see inferno_render_daemon) does the actual
+// AIR->SPIR-V translation once the dispatch reaches the daemon.
+@interface InfernoFunction : NSObject
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, strong) NSData *air;
+@end
+@implementation InfernoFunction
+@end
+
+// NOT real .metallib container parsing: `newLibraryWithData:` below treats
+// its whole input as one function's sanitized AIR .ll TEXT directly. A real
+// .metallib is a binary container (header + section table) holding AIR
+// *bitcode* for potentially many functions -- implementing that parser
+// needs a real compiled .metallib sample to validate against, which wasn't
+// available this session (see project memory). This is an honest, working
+// placeholder for the single-function case our own test tooling uses, not a
+// finished loader.
+@interface InfernoLibrary : NSObject
+@property (nonatomic, strong) NSData *air;
+@end
+@implementation InfernoLibrary
+- (id)newFunctionWithName:(NSString *)name
+{
+    InfernoFunction *fn = [InfernoFunction new];
+    fn.name = name;
+    fn.air = _air;
+    return fn;
+}
+@end
+
+@interface InfernoComputePipelineState : NSObject
+@property (nonatomic, strong) InfernoFunction *function;
+@end
+@implementation InfernoComputePipelineState
+@end
+
+// Single bound buffer (index 0), one dispatch per encoder -- matches
+// inferno-vgpu.h's current wire format exactly (see project memory: proven
+// end to end via inferno_compute_dispatch_test.c, not yet generalized to
+// multiple bindings/images). Real GPU work happens synchronously inside
+// -dispatchThreadgroups:threadsPerThreadgroup: itself rather than being
+// queued for -commit, since InfernoCommandBuffer doesn't yet batch multiple
+// encoded operations -- correct for the single-dispatch-per-buffer case
+// this proves, not a general command-buffer implementation.
+@interface InfernoComputeCommandEncoder : NSObject
+@property (nonatomic, strong) InfernoComputePipelineState *pipeline;
+@property (nonatomic, strong) InfernoBuffer *boundBuffer;
+@property (nonatomic, weak) InfernoCommandBuffer *commandBuffer;
+@end
+@implementation InfernoComputeCommandEncoder
+
+- (void)setComputePipelineState:(id)state
+{
+    _pipeline = state;
+}
+
+- (void)setBuffer:(id)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index
+{
+    (void)offset;
+    if (index == 0) {
+        _boundBuffer = buffer;
+    }
+}
+
+- (void)dispatch
+{
+    if (_pipeline.function.air == nil || _boundBuffer == nil) {
+        return;
+    }
+    io_connect_t conn = _commandBuffer.vgpuConnection;
+    NSData *result = InfernoSendComputeDispatch(conn, _pipeline.function.air,
+                                                  _boundBuffer.contents, _boundBuffer.length);
+    if (result != nil && result.length == _boundBuffer.length) {
+        memcpy(_boundBuffer.contents, result.bytes, result.length);
+    }
+}
+
+- (void)dispatchThreadgroups:(MTLSize)threadgroupsPerGrid
+        threadsPerThreadgroup:(MTLSize)threadsPerThreadgroup
+{
+    (void)threadgroupsPerGrid; (void)threadsPerThreadgroup;
+    [self dispatch];
+}
+
+- (void)dispatchThreads:(MTLSize)threadsPerGrid
+        threadsPerThreadgroup:(MTLSize)threadsPerThreadgroup
+{
+    (void)threadsPerGrid; (void)threadsPerThreadgroup;
+    [self dispatch];
+}
+
+- (void)endEncoding
+{
+}
+
+@end
+
+static id InfernoAGXNewLibraryWithData(id self, SEL _cmd, dispatch_data_t data, NSError **error)
+{
+    (void)self; (void)_cmd;
+    if (error != NULL) {
+        *error = nil;
+    }
+    __block NSMutableData *bytes = [NSMutableData data];
+    dispatch_data_apply(data, ^bool(dispatch_data_t region, size_t offset, const void *buf, size_t size) {
+        (void)region; (void)offset;
+        [bytes appendBytes:buf length:size];
+        return true;
+    });
+    InfernoLibrary *lib = [InfernoLibrary new];
+    lib.air = bytes;
+    return lib;
+}
+
+static id InfernoAGXNewComputePipelineState(id self, SEL _cmd, id function, NSError **error)
+{
+    (void)self; (void)_cmd;
+    if (error != NULL) {
+        *error = nil;
+    }
+    InfernoComputePipelineState *pso = [InfernoComputePipelineState new];
+    pso.function = function;
+    return pso;
+}
+
+void InfernoInstallComputeFallback(id device)
+{
+    Class cls = object_getClass(device);
+    SEL libSel = @selector(newLibraryWithData:error:);
+    if (![device respondsToSelector:libSel]) {
+        class_addMethod(cls, libSel, (IMP)InfernoAGXNewLibraryWithData, "@@:@^@");
+    }
+    SEL psoSel = @selector(newComputePipelineStateWithFunction:error:);
+    if (![device respondsToSelector:psoSel]) {
+        class_addMethod(cls, psoSel, (IMP)InfernoAGXNewComputePipelineState, "@@:@^@");
     }
 }

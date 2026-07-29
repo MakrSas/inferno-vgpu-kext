@@ -72,6 +72,7 @@ static _Bool InfernoAGXSupportsFamily(id self, SEL _cmd, long long family)
 extern void InfernoAssociateVGPUConnection(id device, io_connect_t conn);
 extern void InfernoInstallCommandQueueFallback(id device);
 extern void InfernoInstallBufferFallback(id device);
+extern void InfernoInstallComputeFallback(id device);
 
 static void InfernoAddIfMissing(id device, SEL sel, IMP imp, const char *types)
 {
@@ -97,6 +98,7 @@ static void InfernoPatchMissingDeviceMethods(id device, io_connect_t conn)
     InfernoAssociateVGPUConnection(device, conn);
     InfernoInstallCommandQueueFallback(device);
     InfernoInstallBufferFallback(device);
+    InfernoInstallComputeFallback(device);
 }
 
 // Exported as "Q": the raw machine-code patch in

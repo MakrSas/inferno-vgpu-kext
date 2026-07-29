@@ -377,6 +377,16 @@ jobs:
             -o out8/agx_functional_test src/userspace_test/agx_functional_test.m
           file out8/agx_functional_test
 
+      - name: "Compile agx_metal_api_compute_test.m (real Metal API surface: newLibraryWithData/newComputePipelineState.../computeCommandEncoder/dispatch -> real GPU via inferno_render_daemon)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal \
+            -o out8/agx_metal_api_compute_test src/userspace_test/agx_metal_api_compute_test.m
+          file out8/agx_metal_api_compute_test
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
