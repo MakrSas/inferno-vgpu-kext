@@ -11,6 +11,12 @@
 #import <Metal/Metal.h>
 #import "InfernoVGPUMetalDevice.h"
 
+// Struct-return typedefs -- see the comment above STRUCT_TYPEDEFS in gen_stub.py.
+typedef struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } InfernoStructRet0;
+typedef struct { unsigned long long x0; unsigned long long x1; } InfernoStructRet1;
+typedef struct { unsigned int x0; unsigned int x1; } InfernoStructRet2;
+typedef struct IndirectArgumentBufferCapabilities { unsigned int x0:1; unsigned int x1:1; unsigned int x2:1; unsigned int x3:29; } InfernoStructRet3;
+
 @implementation InfernoVGPUMetalDevice
 
 - (_Bool)supportsFeatureSet:(unsigned long long)set { return NO; }
@@ -54,7 +60,7 @@
 - (id)newLibraryWithData:(id)data error:(id *)error { return nil; }
 - (_Bool)supportsPullModelInterpolation { return NO; }
 - (id)newBinaryArchiveWithDescriptor:(id)descriptor error:(id *)error { return nil; }
-- (struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; })accelerationStructureSizesWithDescriptor:(id)descriptor { struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet0)accelerationStructureSizesWithDescriptor:(id)descriptor { InfernoStructRet0 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (unsigned long long)minimumLinearTextureAlignmentForPixelFormat:(unsigned long long)format { return 0; }
 - (unsigned long long)readWriteTextureSupport { return 0; }
 - (id)newCommandQueueWithMaxCommandBufferCount:(unsigned long long)count { return nil; }
@@ -62,17 +68,17 @@
 - (id)newBufferWithBytesNoCopy:(void *)copy length:(unsigned long long)length options:(unsigned long long)options deallocator:(id /* block */)deallocator { return nil; }
 - (id)newTextureWithDescriptor:(id)descriptor iosurface:(struct __IOSurface *)iosurface plane:(unsigned long long)plane { return nil; }
 - (id)newBufferWithBytes:(const void *)bytes length:(unsigned long long)length options:(unsigned long long)options { return nil; }
-- (struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; })maxThreadsPerThreadgroup { struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet0)maxThreadsPerThreadgroup { InfernoStructRet0 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (_Bool)supportsVertexAmplificationCount:(unsigned long long)count { return NO; }
 - (void)newComputePipelineStateWithDescriptor:(id)descriptor options:(unsigned long long)options completionHandler:(id /* block */)handler {  }
 - (id)newRenderPipelineStateWithDescriptor:(id)descriptor options:(unsigned long long)options reflection:(id *)reflection error:(id *)error { return nil; }
-- (struct { unsigned long long x0; unsigned long long x1; })heapTextureSizeAndAlignWithDescriptor:(id)descriptor { struct { unsigned long long x0; unsigned long long x1; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
-- (struct { unsigned long long x0; unsigned long long x1; })heapBufferSizeAndAlignWithLength:(unsigned long long)length options:(unsigned long long)options { struct { unsigned long long x0; unsigned long long x1; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet1)heapTextureSizeAndAlignWithDescriptor:(id)descriptor { InfernoStructRet1 __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet1)heapBufferSizeAndAlignWithLength:(unsigned long long)length options:(unsigned long long)options { InfernoStructRet1 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (id)newHeapWithDescriptor:(id)descriptor { return nil; }
 - (unsigned long long)minimumTextureBufferAlignmentForPixelFormat:(unsigned long long)format { return 0; }
 - (_Bool)isHeadless { return NO; }
 - (_Bool)isDepth24Stencil8PixelFormatSupported { return NO; }
-- (struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; })sparseTileSizeWithTextureType:(unsigned long long)type pixelFormat:(unsigned long long)format sampleCount:(unsigned long long)count { struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet0)sparseTileSizeWithTextureType:(unsigned long long)type pixelFormat:(unsigned long long)format sampleCount:(unsigned long long)count { InfernoStructRet0 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (unsigned long long)maxThreadgroupMemoryLength { return 0; }
 - (id)newBufferWithLength:(unsigned long long)length options:(unsigned long long)options { return nil; }
 - (id)newSamplerStateWithDescriptor:(id)descriptor { return nil; }
@@ -85,7 +91,7 @@
 - (void)convertSparsePixelRegions:(const struct { struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } x0; struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } x1; } *)regions toTileRegions:(struct { struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } x0; struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } x1; } *)regions withTileSize:(struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; })size alignmentMode:(unsigned long long)mode numRegions:(unsigned long long)regions {  }
 + (void)registerDevices {  }
 - (unsigned long long)linearTextureArrayAlignmentBytes { return 0; }
-- (struct { unsigned int x0; unsigned int x1; })pipelineCacheStats { struct { unsigned int x0; unsigned int x1; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet2)pipelineCacheStats { InfernoStructRet2 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (void)setGPUAssertionsEnabled:(_Bool)enabled {  }
 - (unsigned long long)maxTessellationFactor { return 0; }
 - (_Bool)supportsNativeHardwareFP16 { return NO; }
@@ -134,7 +140,7 @@
 - (_Bool)supportsTexture2DMultisampleArray { return NO; }
 - (_Bool)supportsShaderLODAverage { return NO; }
 - (_Bool)supportsProgrammableSamplePositions { return NO; }
-- (struct { unsigned int x0; unsigned int x1; })libraryCacheStats { struct { unsigned int x0; unsigned int x1; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet2)libraryCacheStats { InfernoStructRet2 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (unsigned long long)maxFragmentSamplers { return 0; }
 - (unsigned long long)maxIndirectBuffers { return 0; }
 - (_Bool)supportsViewportAndScissorArray { return NO; }
@@ -201,7 +207,7 @@
 - (unsigned long long)maxFunctionConstantIndices { return 0; }
 - (_Bool)supportsYCBCRFormatsPQ { return NO; }
 - (_Bool)supportsMirrorClampToEdgeSamplerMode { return NO; }
-- (struct IndirectArgumentBufferCapabilities { unsigned int x0:1; unsigned int x1:1; unsigned int x2:1; unsigned int x3:29; })indirectArgumentBufferCapabilities { struct IndirectArgumentBufferCapabilities { unsigned int x0:1; unsigned int x1:1; unsigned int x2:1; unsigned int x3:29; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet3)indirectArgumentBufferCapabilities { InfernoStructRet3 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (unsigned long long)maxTextureWidth1D { return 0; }
 - (_Bool)supportsFloat16BCubicFiltering { return NO; }
 - (_Bool)supports3DASTCTextures { return NO; }
@@ -358,7 +364,7 @@
 - (_Bool)mapShaderSampleBufferWithBuffer:(struct { unsigned int x0; unsigned int x1; unsigned int x2; } *)buffer capacity:(unsigned long long)capacity size:(unsigned long long)size { return NO; }
 - (void)unmapShaderSampleBuffer {  }
 - (id)newIndirectArgumentEncoderWithArguments:(id)arguments { return nil; }
-- (struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; })tileSizeWithSparsePageSize:(unsigned long long)size textureType:(unsigned long long)type pixelFormat:(unsigned long long)format sampleCount:(unsigned long long)count { struct { unsigned long long x0; unsigned long long x1; unsigned long long x2; } __r; memset(&__r, 0, sizeof(__r)); return __r; }
+- (InfernoStructRet0)tileSizeWithSparsePageSize:(unsigned long long)size textureType:(unsigned long long)type pixelFormat:(unsigned long long)format sampleCount:(unsigned long long)count { InfernoStructRet0 __r; memset(&__r, 0, sizeof(__r)); return __r; }
 - (id)newLibraryWithCIFiltersForComputePipeline:(id)pipeline imageFilterFunctionInfo:(const struct { _Bool x0; unsigned long long x1; void * /* struct */ x2; } *)info error:(id *)error { return nil; }
 - (id)newResourceGroupFromResources:(const id *)resources count:(unsigned long long)count { return nil; }
 - (id)newTextureWithBytesNoCopy:(void *)copy length:(unsigned long long)length descriptor:(id)descriptor deallocator:(id /* block */)deallocator { return nil; }

@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <IOKit/IOKitLib.h>
 
 // Conforms to MTLDevice + MTLDeviceSPI (see MTLDevice.txt / MTLDeviceSPI.txt
 // in this directory, dumped from this project's own guest's real
