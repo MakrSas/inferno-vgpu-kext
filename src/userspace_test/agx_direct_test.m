@@ -44,14 +44,14 @@ int main(void)
         printf("IOServiceOpen succeeded, connection=0x%x\n", conn);
 
         Class agxClass = NSClassFromString(@"AGXPrincipalDevice");
-        printf("AGXPrincipalDevice class -> %p\n", (void *)agxClass);
+        printf("AGXPrincipalDevice class -> %p\n", (__bridge void *)agxClass);
         if (agxClass == Nil) {
             printf("class not found\n");
             return 1;
         }
 
         id device = [agxClass alloc];
-        printf("alloc -> %p\n", (void *)device);
+        printf("alloc -> %p\n", (__bridge void *)device);
         if (device == nil) {
             return 1;
         }
@@ -64,7 +64,7 @@ int main(void)
         id (*func)(id, SEL, io_connect_t) =
             (id (*)(id, SEL, io_connect_t))[device methodForSelector:sel];
         id inited = func(device, sel, conn);
-        printf("initWithAcceleratorPort: -> %p\n", (void *)inited);
+        printf("initWithAcceleratorPort: -> %p\n", (__bridge void *)inited);
 
         if (inited != nil) {
             printf("conformsToProtocol(MTLDevice) -> %d\n",
