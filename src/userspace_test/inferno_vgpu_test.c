@@ -36,7 +36,11 @@ int main(void)
         return 1;
     }
 
-    kr = IOServiceGetMatchingServices(kIOMasterPortDefault, matching, &iter);
+    // kIOMasterPortDefault is unavailable on iOS -- MACH_PORT_NULL is the
+    // modern, SDK-version-agnostic way to say "use the default main port"
+    // (kIOMainPortDefault, the newer name for the same constant, has its own
+    // availability guards that vary by SDK/deployment-target combination).
+    kr = IOServiceGetMatchingServices(MACH_PORT_NULL, matching, &iter);
     if (kr != KERN_SUCCESS) {
         fprintf(stderr, "IOServiceGetMatchingServices failed: 0x%x\n", kr);
         return 1;
