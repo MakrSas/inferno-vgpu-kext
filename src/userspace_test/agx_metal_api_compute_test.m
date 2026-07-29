@@ -61,27 +61,27 @@ int main(void)
 
         NSError *error = nil;
         id<MTLLibrary> library = [device newLibraryWithData:airData error:&error];
-        CHECK(library != nil, "newLibraryWithData: -> %p", (void *)library);
+        CHECK(library != nil, "newLibraryWithData: -> %p", (__bridge void *)library);
 
         id<MTLFunction> function = [library newFunctionWithName:@"store_const"];
-        CHECK(function != nil, "newFunctionWithName: -> %p", (void *)function);
+        CHECK(function != nil, "newFunctionWithName: -> %p", (__bridge void *)function);
 
         id<MTLComputePipelineState> pipeline =
             [device newComputePipelineStateWithFunction:function error:&error];
-        CHECK(pipeline != nil, "newComputePipelineStateWithFunction: -> %p", (void *)pipeline);
+        CHECK(pipeline != nil, "newComputePipelineStateWithFunction: -> %p", (__bridge void *)pipeline);
 
         id<MTLBuffer> buffer = [device newBufferWithLength:4 options:0];
-        CHECK(buffer != nil, "newBufferWithLength: -> %p", (void *)buffer);
+        CHECK(buffer != nil, "newBufferWithLength: -> %p", (__bridge void *)buffer);
         memset(buffer.contents, 0, 4);
 
         id<MTLCommandQueue> queue = [device newCommandQueue];
-        CHECK(queue != nil, "newCommandQueue -> %p", (void *)queue);
+        CHECK(queue != nil, "newCommandQueue -> %p", (__bridge void *)queue);
 
         id<MTLCommandBuffer> cmdBuf = [queue commandBuffer];
-        CHECK(cmdBuf != nil, "commandBuffer -> %p", (void *)cmdBuf);
+        CHECK(cmdBuf != nil, "commandBuffer -> %p", (__bridge void *)cmdBuf);
 
         id<MTLComputeCommandEncoder> encoder = [cmdBuf computeCommandEncoder];
-        CHECK(encoder != nil, "computeCommandEncoder -> %p", (void *)encoder);
+        CHECK(encoder != nil, "computeCommandEncoder -> %p", (__bridge void *)encoder);
 
         [encoder setComputePipelineState:pipeline];
         [encoder setBuffer:buffer offset:0 atIndex:0];

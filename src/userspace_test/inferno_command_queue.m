@@ -18,6 +18,8 @@
 #import <objc/runtime.h>
 #import <dispatch/dispatch.h>
 
+@class InfernoComputeCommandEncoder;
+
 // Mirrors InfernoVGPUUserClient's external-method index 0 (sGetVersion) --
 // the only opcode proven end-to-end this session (inferno_vgpu_test). Real
 // command-encoding opcodes don't exist yet; committing just exercises this
@@ -135,8 +137,12 @@ static NSData *InfernoSendComputeDispatch(io_connect_t conn, NSData *air,
 
 - (id)computeCommandEncoder
 {
-    InfernoComputeCommandEncoder *enc = [InfernoComputeCommandEncoder new];
-    enc.commandBuffer = self;
+    // `id`-typed on purpose: InfernoComputeCommandEncoder's full @interface
+    // isn't visible yet at this point in the file (only forward-declared),
+    // so a statically-typed local would need its property/message sends
+    // known here too -- plain `id` messaging skips that check entirely.
+    id enc = [NSClassFromString(@"InfernoComputeCommandEncoder") new];
+    [enc setCommandBuffer:self];
     return enc;
 }
 
