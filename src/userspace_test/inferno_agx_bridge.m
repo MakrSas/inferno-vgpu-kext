@@ -26,12 +26,21 @@ static NSString *InfernoAGXName(id self, SEL _cmd)
     return @"Inferno AGX";
 }
 
-static void InfernoPatchMissingDeviceMethods(id device)
+// Defined in inferno_command_queue.m -- gives -newCommandQueue a real,
+// non-crashing implementation backed by our own inferno-vgpu IOKit
+// connection instead of AGXPrincipalDevice's (nonfunctional, given
+// Inferno's current AGX register emulation) real hardware path.
+extern void InfernoAssociateVGPUConnection(id device, io_connect_t conn);
+extern void InfernoInstallCommandQueueFallback(id device);
+
+static void InfernoPatchMissingDeviceMethods(id device, io_connect_t conn)
 {
     Class cls = object_getClass(device);
     if (![device respondsToSelector:@selector(name)]) {
         class_addMethod(cls, @selector(name), (IMP)InfernoAGXName, "@@:");
     }
+    InfernoAssociateVGPUConnection(device, conn);
+    InfernoInstallCommandQueueFallback(device);
 }
 
 // Exported as "Q": the raw machine-code patch in
@@ -93,7 +102,7 @@ void *Q(void)
         if (inited == nil) {
             return NULL;
         }
-        InfernoPatchMissingDeviceMethods(inited);
+        InfernoPatchMissingDeviceMethods(inited, conn);
 
         // Leak deliberately (CFBridgingRetain / +1 retain): the raw machine
         // code patch calling this has no ARC and just wants a plain,

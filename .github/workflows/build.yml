@@ -327,7 +327,9 @@ jobs:
           clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
             -framework Foundation -framework Metal -framework IOKit \
             -dynamiclib -install_name /usr/lib/inferno_agx_bridge.dylib \
-            -o out8/inferno_agx_bridge.dylib src/userspace_test/inferno_agx_bridge.m
+            -o out8/inferno_agx_bridge.dylib \
+            src/userspace_test/inferno_agx_bridge.m \
+            src/userspace_test/inferno_command_queue.m
           file out8/inferno_agx_bridge.dylib
           otool -hv out8/inferno_agx_bridge.dylib
           echo "--- exported symbols (need InfernoGetAGXDevice) ---"

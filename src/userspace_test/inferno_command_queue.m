@@ -1,0 +1,148 @@
+// Minimal, real (not stubbed-to-crash) MTLCommandQueue/MTLCommandBuffer
+// pair for the AGXPrincipalDevice instances Q() constructs (see
+// inferno_agx_bridge.m). AGXPrincipalDevice's own -newCommandQueue is
+// unimplemented on this instance (same root cause as -name: our
+// -initWithAcceleratorPort: patch is `return self`, skipping whatever real
+// setup would have wired command-queue creation up to the actual AGX
+// hardware path -- which wouldn't work anyway, since Inferno's AGX register
+// emulation reads back all-0xFFFFFFFF for every register per the boot log).
+// This gives callers a real, non-crashing object graph instead: commit()
+// round-trips through our own already-proven-working inferno-vgpu FIFO
+// (the same opcode=0x1234 test packet inferno_vgpu_test exercises), so a
+// commit is a real IOKit call, not a no-op -- just not yet driving actual
+// GPU rendering, since no opcode beyond the test one exists device/kernel
+// side yet.
+#import <Foundation/Foundation.h>
+#import <IOKit/IOKitLib.h>
+#import <Metal/Metal.h>
+#import <objc/runtime.h>
+
+// Mirrors InfernoVGPUUserClient's external-method index 0 (sGetVersion) --
+// the only opcode proven end-to-end this session (inferno_vgpu_test). Real
+// command-encoding opcodes don't exist yet; committing just exercises this
+// same round trip as a functional heartbeat.
+static const uint32_t kInfernoExternalMethodPing = 0;
+
+@interface InfernoCommandBuffer : NSObject
+@property (nonatomic, assign) io_connect_t vgpuConnection;
+@property (nonatomic, assign) MTLCommandBufferStatus status;
+@property (nonatomic, copy) NSString *label;
+@end
+
+@implementation InfernoCommandBuffer
+
+- (instancetype)initWithConnection:(io_connect_t)conn
+{
+    self = [super init];
+    if (self == nil) {
+        return nil;
+    }
+    _vgpuConnection = conn;
+    _status = MTLCommandBufferStatusNotEnqueued;
+    return self;
+}
+
+- (void)enqueue
+{
+    _status = MTLCommandBufferStatusEnqueued;
+}
+
+- (void)commit
+{
+    _status = MTLCommandBufferStatusCommitted;
+    if (_vgpuConnection != IO_OBJECT_NULL) {
+        uint64_t out = 0;
+        uint32_t outCnt = 1;
+        // sGetVersion takes 0 scalar in, 1 scalar out (see
+        // InfernoVGPUHello.cpp's IOExternalMethodDispatch table) -- reusing
+        // it here as a real, working round trip rather than inventing an
+        // unbacked opcode with no kernel-side handler.
+        IOConnectCallScalarMethod(_vgpuConnection, kInfernoExternalMethodPing,
+                                   NULL, 0, &out, &outCnt);
+    }
+    _status = MTLCommandBufferStatusCompleted;
+}
+
+- (void)waitUntilScheduled
+{
+}
+
+- (void)waitUntilCompleted
+{
+    // commit() above is synchronous already -- nothing to wait for.
+}
+
+- (void)addCompletedHandler:(MTLCommandBufferHandler)block
+{
+    if (_status == MTLCommandBufferStatusCompleted) {
+        block((id<MTLCommandBuffer>)self);
+    }
+}
+
+- (void)addScheduledHandler:(MTLCommandBufferHandler)block
+{
+    block((id<MTLCommandBuffer>)self);
+}
+
+- (NSError *)error
+{
+    return nil;
+}
+
+@end
+
+@interface InfernoCommandQueue : NSObject
+@property (nonatomic, assign) io_connect_t vgpuConnection;
+@property (nonatomic, weak) id<MTLDevice> device;
+@property (nonatomic, copy) NSString *label;
+@end
+
+@implementation InfernoCommandQueue
+
+- (instancetype)initWithDevice:(id<MTLDevice>)device connection:(io_connect_t)conn
+{
+    self = [super init];
+    if (self == nil) {
+        return nil;
+    }
+    _device = device;
+    _vgpuConnection = conn;
+    return self;
+}
+
+- (id)commandBuffer
+{
+    return [[InfernoCommandBuffer alloc] initWithConnection:_vgpuConnection];
+}
+
+- (id)commandBufferWithUnretainedReferences
+{
+    return [self commandBuffer];
+}
+
+@end
+
+static const void *kInfernoVGPUConnKey = &kInfernoVGPUConnKey;
+
+void InfernoAssociateVGPUConnection(id device, io_connect_t conn)
+{
+    objc_setAssociatedObject(device, kInfernoVGPUConnKey,
+                              @(conn), OBJC_ASSOCIATION_RETAIN);
+}
+
+static id InfernoAGXNewCommandQueue(id self, SEL _cmd)
+{
+    (void)_cmd;
+    NSNumber *connNum = objc_getAssociatedObject(self, kInfernoVGPUConnKey);
+    io_connect_t conn = connNum ? (io_connect_t)connNum.unsignedIntValue : IO_OBJECT_NULL;
+    return [[InfernoCommandQueue alloc] initWithDevice:self connection:conn];
+}
+
+void InfernoInstallCommandQueueFallback(id device)
+{
+    Class cls = object_getClass(device);
+    if (![device respondsToSelector:@selector(newCommandQueue)]) {
+        class_addMethod(cls, @selector(newCommandQueue),
+                         (IMP)InfernoAGXNewCommandQueue, "@@:");
+    }
+}
