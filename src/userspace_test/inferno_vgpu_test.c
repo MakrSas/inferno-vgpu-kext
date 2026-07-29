@@ -28,11 +28,15 @@ int main(void)
     io_service_t service = IO_OBJECT_NULL;
     io_connect_t conn = IO_OBJECT_NULL;
 
-    // MetalPluginClassName's value ("InfernoVGPUMetalDevice") is a property,
-    // not the IOClass -- match by the real class name instead.
-    CFMutableDictionaryRef matching = IOServiceMatching("InfernoVGPUHello");
+    // IOServiceMatching(class) makes IOService::copyExistingServices() take
+    // the OSMetaClass::applyToInstancesOfClassName() fast path, which faults
+    // (NULL deref reading the found OSMetaClass's className field) against
+    // our hand-linked class -- use IONameMatch instead, which walks the live
+    // IORegistry tree (IOService::registerService() defaults an instance's
+    // name to its class name, so this still finds InfernoVGPUHello).
+    CFMutableDictionaryRef matching = IOServiceNameMatching("InfernoVGPUHello");
     if (matching == NULL) {
-        fprintf(stderr, "IOServiceMatching failed\n");
+        fprintf(stderr, "IOServiceNameMatching failed\n");
         return 1;
     }
 
