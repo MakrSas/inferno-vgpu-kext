@@ -232,3 +232,37 @@ jobs:
           name: userspace-test-binary
           path: out4/
           if-no-files-found: warn
+
+  metal-plugin-bundle:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate the auto-generated stub (keeps it in sync with the checked-in class-dumps)
+        run: |
+          set -x
+          cd metal_spi
+          python3 gen_stub.py
+
+      - name: Compile InfernoVGPUMetalDevice.m + generated stub into a real MTLDeviceSPI-conforming .dylib (iphoneOS SDK, arm64e)
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out5/InfernoVGPUMetal.bundle
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal -framework IOKit \
+            -bundle -o out5/InfernoVGPUMetal.bundle/InfernoVGPUMetal \
+            metal_spi/InfernoVGPUMetalDevice.m metal_spi/InfernoVGPUMetalDevice_generated.m
+          cp metal_spi/Info.plist out5/InfernoVGPUMetal.bundle/Info.plist
+          file out5/InfernoVGPUMetal.bundle/InfernoVGPUMetal
+          otool -hv out5/InfernoVGPUMetal.bundle/InfernoVGPUMetal
+          echo "--- linked libraries ---"
+          otool -L out5/InfernoVGPUMetal.bundle/InfernoVGPUMetal
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metal-plugin-bundle
+          path: out5/
+          if-no-files-found: warn
