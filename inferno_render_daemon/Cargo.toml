@@ -1,0 +1,14 @@
+[package]
+name = "inferno_render_daemon"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone host-side process the QEMU inferno-vgpu device model talks to
+# over a Unix socket (see hw/arm/apple-silicon/inferno-vgpu.c) for
+# INFERNO_VGPU_OP_COMPUTE_DISPATCH. Keeps metal2vulkan + reims-vgpu's Vulkan
+# engine (and their whole Rust/cargo dependency graph) out of QEMU's own C
+# build entirely -- see host_render_poc, which proved the same two
+# dependencies combine correctly on this host's real GPU.
+[dependencies]
+metal2vulkan = { git = "https://github.com/steelbrain/metal2vulkan.git", rev = "f9832cec3fe55d28069e3c8aa4bd307a7c0296c9" }
+reims-vgpu = { path = "/home/makr/Documents/MACOS/reims-vgpu/crates/reims-vgpu", default-features = false, features = ["backend-vulkan"] }

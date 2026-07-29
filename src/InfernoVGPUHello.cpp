@@ -96,6 +96,11 @@ extern "C" uint64_t kvtophys(uintptr_t va);
 #define FIFO_TEST_RING_OFFSET 0x400
 #define FIFO_TEST_RING_ADDR (0xfffffff1020c4000ULL + FIFO_TEST_RING_OFFSET)
 #define INFERNO_VGPU_PAGE_SHIFT 14
+#define FIFO_TEST_RING_LEN 0x1000
+
+// See inferno-vgpu.h: forwarded near-verbatim to the host inferno-render-daemon
+// over a Unix socket by the QEMU device model.
+#define INFERNO_VGPU_OP_COMPUTE_DISPATCH 0x0002
 
 class InfernoVGPUHello : public IOService
 {
@@ -109,6 +114,14 @@ public:
 
 	uint32_t readVersionRegister(void);
 	void submitTestFifoPacket(void);
+	// Builds a real INFERNO_VGPU_OP_COMPUTE_DISPATCH packet from `payload`
+	// (already in the wire format inferno-vgpu.h documents: air_len, air
+	// bytes, buf_len, buf bytes) into the same test ring, kicks the device,
+	// and returns the device's LAST_STATUS (0 = ok). The device overwrites
+	// the buffer-bytes region of the ring in place with the real dispatch
+	// result -- callers read it back via ringBase()/ringPayloadOffset().
+	uint32_t submitComputeDispatch(const uint8_t *payload, uint32_t payloadLen);
+	static volatile uint8_t *ringBase(void) { return (volatile uint8_t *)FIFO_TEST_RING_ADDR; }
 
 private:
 	IOMemoryMap *fDeviceMap;
@@ -201,6 +214,52 @@ void InfernoVGPUHello::submitTestFifoPacket(void)
 	regs[INFERNO_VGPU_REG_MAIN_KICK / 4] = 1;
 }
 
+uint32_t InfernoVGPUHello::submitComputeDispatch(const uint8_t *payload, uint32_t payloadLen)
+{
+	if (fDeviceMap == NULL) {
+		return 1;
+	}
+	// Header (12) + payload must fit the ring's fixed length -- same 4KB
+	// budget submitTestFifoPacket() already lives inside.
+	if (payloadLen > FIFO_TEST_RING_LEN - 12) {
+		return 1;
+	}
+
+	volatile uint8_t *packet = ringBase();
+	uint32_t totalSize = 12 + payloadLen;
+
+	packet[0] = INFERNO_VGPU_OP_COMPUTE_DISPATCH & 0xff;
+	packet[1] = (INFERNO_VGPU_OP_COMPUTE_DISPATCH >> 8) & 0xff;
+	packet[2] = 0;
+	packet[3] = 0;
+	packet[4] = totalSize & 0xff;
+	packet[5] = (totalSize >> 8) & 0xff;
+	packet[6] = (totalSize >> 16) & 0xff;
+	packet[7] = (totalSize >> 24) & 0xff;
+	packet[8] = 0xbe;
+	packet[9] = 0xba;
+	packet[10] = 0xfe;
+	packet[11] = 0xca;
+	for (uint32_t i = 0; i < payloadLen; i++) {
+		packet[12 + i] = payload[i];
+	}
+
+	uint64_t ring_phys = kvtophys((uintptr_t)FIFO_TEST_RING_ADDR);
+	uint32_t ring_base_page = (uint32_t)(ring_phys >> INFERNO_VGPU_PAGE_SHIFT);
+
+	volatile uint32_t *regs = (volatile uint32_t *)fDeviceMap->getVirtualAddress();
+	regs[INFERNO_VGPU_REG_FIFO_BASE_PAGE / 4] = ring_base_page;
+	regs[INFERNO_VGPU_REG_FIFO_LENGTH / 4] = FIFO_TEST_RING_LEN;
+	regs[INFERNO_VGPU_REG_FIFO_READ / 4] = FIFO_TEST_RING_OFFSET;
+	regs[INFERNO_VGPU_REG_CONTROL_FIFO / 4] = 1;
+	regs[INFERNO_VGPU_REG_FIFO_WRITTEN / 4] = FIFO_TEST_RING_OFFSET + totalSize;
+	regs[INFERNO_VGPU_REG_MAIN_KICK / 4] = 1;
+
+	// LAST_STATUS: written synchronously by the device's drain (QEMU's MMIO
+	// dispatch is single-threaded), 0 = ok. See inferno-vgpu.h.
+	return regs[0x103c / 4];
+}
+
 class InfernoVGPUUserClient : public IOUserClient
 {
 	OSDeclareDefaultStructors(InfernoVGPUUserClient)
@@ -217,6 +276,8 @@ public:
 
 	static IOReturn sGetVersion(InfernoVGPUUserClient *target, void *reference,
 	                             IOExternalMethodArguments *arguments);
+	static IOReturn sComputeDispatch(InfernoVGPUUserClient *target, void *reference,
+	                                   IOExternalMethodArguments *arguments);
 
 private:
 	InfernoVGPUHello *fProvider;
@@ -226,6 +287,7 @@ OSDefineMetaClassAndStructors(InfernoVGPUUserClient, IOUserClient)
 
 enum {
 	kInfernoVGPUMethodGetVersion = 0,
+	kInfernoVGPUMethodComputeDispatch = 1,
 	kInfernoVGPUMethodCount
 };
 
@@ -238,8 +300,13 @@ enum {
 // kIOReturnBadArgument before sGetVersion ever ran, confirmed live via
 // IOConnectCallScalarMethod(..., &version, &outputCount=1) failing with
 // 0xe00002c2 despite IOServiceOpen() itself succeeding.
+// sComputeDispatch takes a variable-size structure input (the wire payload)
+// and produces a variable-size structure output (the dispatch result) --
+// kIOUCVariableStructureSize on both, no scalars either side.
 static const IOExternalMethodDispatch sInfernoVGPUMethods[kInfernoVGPUMethodCount] = {
 	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sGetVersion, 0, 0, 1, 0 },
+	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sComputeDispatch, 0,
+	  kIOUCVariableStructureSize, 0, kIOUCVariableStructureSize },
 };
 
 bool InfernoVGPUUserClient::initWithTask(task_t owningTask, void *securityID,
@@ -311,6 +378,52 @@ IOReturn InfernoVGPUUserClient::sGetVersion(InfernoVGPUUserClient *target,
 	arguments->scalarOutput[0] = target->fProvider->readVersionRegister();
 	arguments->scalarOutputCount = 1;
 	return kIOReturnSuccess;
+}
+
+// Input wire format (inferno-vgpu.h): u32 air_len, air_bytes[air_len]
+// (4-byte padded), u32 buf_len, buf_bytes[buf_len] (4-byte padded). Kicks a
+// real INFERNO_VGPU_OP_COMPUTE_DISPATCH through the provider, then copies
+// the ring's now-mutated buffer bytes back out as the structure output.
+IOReturn InfernoVGPUUserClient::sComputeDispatch(InfernoVGPUUserClient *target,
+                                                   void *reference,
+                                                   IOExternalMethodArguments *arguments)
+{
+	if (target == NULL || target->fProvider == NULL) {
+		return kIOReturnNotReady;
+	}
+
+	const uint8_t *in = (const uint8_t *)arguments->structureInput;
+	uint32_t inSize = arguments->structureInputSize;
+	if (in == NULL || inSize < 8) {
+		return kIOReturnBadArgument;
+	}
+
+	uint32_t airLen = in[0] | (in[1] << 8) | (in[2] << 16) | (in[3] << 24);
+	uint32_t bufOff = 4 + ((airLen + 3) & ~3u);
+	if (bufOff + 4 > inSize) {
+		return kIOReturnBadArgument;
+	}
+	uint32_t bufLen = in[bufOff] | (in[bufOff + 1] << 8) | (in[bufOff + 2] << 16) | (in[bufOff + 3] << 24);
+	if (bufOff + 4 + bufLen > inSize) {
+		return kIOReturnBadArgument;
+	}
+
+	uint32_t status = target->fProvider->submitComputeDispatch(in, inSize);
+
+	if (status == 0 && arguments->structureOutput != NULL &&
+	   arguments->structureOutputSize >= bufLen) {
+		volatile uint8_t *ring = InfernoVGPUHello::ringBase();
+		uint8_t *out = (uint8_t *)arguments->structureOutput;
+		uint32_t resultOff = 12 + bufOff + 4;
+		for (uint32_t i = 0; i < bufLen; i++) {
+			out[i] = ring[resultOff + i];
+		}
+		arguments->structureOutputSize = bufLen;
+	} else {
+		arguments->structureOutputSize = 0;
+	}
+
+	return (status == 0) ? kIOReturnSuccess : kIOReturnIOError;
 }
 
 IOReturn InfernoVGPUHello::newUserClient(task_t owningTask, void *securityID,

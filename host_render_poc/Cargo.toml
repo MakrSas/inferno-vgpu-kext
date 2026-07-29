@@ -1,0 +1,14 @@
+[package]
+name = "host_render_poc"
+version = "0.1.0"
+edition = "2021"
+
+# Proves the two halves needed for real Inferno/iOS Metal rendering combine on
+# this host: metal2vulkan (AIR -> SPIR-V) feeding reims-vgpu's Vulkan engine
+# (SPIR-V + plain bytes -> real GPU execution). Neither dependency needs
+# Apple's real paravirt-GPU wire protocol -- reims-vgpu's compute engine takes
+# "resolved bytes + SPIR-V only" (see its own doc comment on ComputeRequest),
+# so this is directly reusable for our own, much simpler guest<->host protocol.
+[dependencies]
+metal2vulkan = { git = "https://github.com/steelbrain/metal2vulkan.git", rev = "f9832cec3fe55d28069e3c8aa4bd307a7c0296c9" }
+reims-vgpu = { path = "/home/makr/Documents/MACOS/reims-vgpu/crates/reims-vgpu", default-features = false, features = ["backend-vulkan"] }
