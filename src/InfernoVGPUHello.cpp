@@ -32,6 +32,19 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOUserClient.h>
 
+// Real, exported XNU-internal function (not part of any public IOKit header
+// -- hand-declared here) that walks the live kernel page tables to translate
+// a kernel virtual address to its actual physical address. A plain C
+// function, not virtual, so no -fapple-kext dispatch-fixup concerns at all --
+// resolves as an ordinary direct call like every other kernel-export BL in
+// this file. Needed because carved/reserved RAM (like the COMMON_BASE
+// scratch region) does NOT follow the kernel image's own physmap formula
+// (phys = virt - kernel_virt_base + kernel_phys_base) -- confirmed wrong,
+// twice, live: the carve's real physical backing address isn't even stable
+// across rebuilds/reboots of the same kernelcache, so no hardcoded constant
+// can ever be correct here; it must be looked up fresh every boot.
+extern "C" uint64_t kvtophys(uintptr_t va);
+
 // inferno-vgpu-v1's MMIO base, as mapped by t8030_create_inferno_vgpu_node()
 // in this exact QEMU build/machine config (kaslr-off=true, fixed device
 // tree) -- confirmed empirically via QMP `info mtree` showing
@@ -55,28 +68,13 @@
 // A small test FIFO ring, placed at a fixed offset within the same 4KB
 // COMMON_BASE carve (well clear of gMetaClass/scratch above), used only to
 // verify the device's packet-framing/ring-math end to end -- not part of the
-// real driver's eventual FIFO usage.
+// real driver's eventual FIFO usage. Its PHYSICAL page (needed for
+// FIFO_BASE_PAGE) is deliberately NOT a hardcoded constant here -- see
+// kvtophys() above for why -- it's computed at runtime in
+// submitTestFifoPacket() instead.
 #define FIFO_TEST_RING_OFFSET 0x400
 #define FIFO_TEST_RING_ADDR (0xfffffff1020c4000ULL + FIFO_TEST_RING_OFFSET)
-// PFN (14-bit/16KB page shift) of COMMON_BASE's own physical page.
-//
-// NOT the same value the earlier "phys = virt - 0xfffffff006000000 +
-// 0x800000000" formula (used elsewhere in this project for the KERNEL
-// IMAGE's own addresses) produces for this address -- that formula gave
-// 0x8fc0c4000, which is WRONG here. Confirmed live via QEMU's own
-// authoritative `gva2gpa` HMP command (`gva2gpa 0xfffffff1020c4000`), the
-// real physical base is 0x8ceb1c000: the linear kernel-image physmap
-// formula does not extend to carved/reserved RAM outside the kernel
-// image's own footprint (exactly the caveat flagged, but never actually
-// tested, much earlier in this project) -- the device read the wrong
-// physical page entirely and silently found nothing, until this was caught
-// by comparing a QMP `xp` (physical) read against a `x` (virtual) read at
-// the address the guest actually wrote and finding they disagreed.
-//
-// This is carve-specific and may shift on any rebuild of Inferno/relink of
-// this kext (same caveat as CODE_BASE/COMMON_BASE elsewhere) -- always
-// reconfirm with `gva2gpa` before trusting it again.
-#define FIFO_TEST_RING_BASE_PAGE (0x8ceb1c000ULL >> 14)
+#define INFERNO_VGPU_PAGE_SHIFT 14
 
 class InfernoVGPUHello : public IOService
 {
@@ -154,8 +152,15 @@ void InfernoVGPUHello::submitTestFifoPacket(void)
 	packet[4] = 0x0c; packet[5] = 0x00; packet[6] = 0x00; packet[7] = 0x00;  // total_size = 12
 	packet[8] = 0xbe; packet[9] = 0xba; packet[10] = 0xfe; packet[11] = 0xca; // completion_stamp
 
+	// Page-truncating a physical address that falls inside the target page
+	// (rather than page-aligning the virtual address before translating)
+	// gives the same page number either way, since the offset within the
+	// page is preserved by kvtophys() and then discarded by the shift.
+	uint64_t ring_phys = kvtophys((uintptr_t)FIFO_TEST_RING_ADDR);
+	uint32_t ring_base_page = (uint32_t)(ring_phys >> INFERNO_VGPU_PAGE_SHIFT);
+
 	volatile uint32_t *regs = (volatile uint32_t *)fDeviceMap->getVirtualAddress();
-	regs[INFERNO_VGPU_REG_FIFO_BASE_PAGE / 4] = (uint32_t)FIFO_TEST_RING_BASE_PAGE;
+	regs[INFERNO_VGPU_REG_FIFO_BASE_PAGE / 4] = ring_base_page;
 	regs[INFERNO_VGPU_REG_FIFO_LENGTH / 4] = 0x1000;
 	regs[INFERNO_VGPU_REG_FIFO_READ / 4] = FIFO_TEST_RING_OFFSET;
 	regs[INFERNO_VGPU_REG_CONTROL_FIFO / 4] = 1;
