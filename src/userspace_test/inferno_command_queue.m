@@ -330,7 +330,13 @@ void InfernoInstallBufferFallback(id device)
 @interface InfernoComputeCommandEncoder : NSObject
 @property (nonatomic, strong) InfernoComputePipelineState *pipeline;
 @property (nonatomic, strong) InfernoBuffer *boundBuffer;
-@property (nonatomic, weak) InfernoCommandBuffer *commandBuffer;
+// `assign`, not `weak` -- same reasoning as InfernoCommandQueue.device /
+// InfernoBuffer.device above: `weak` on an object whose weak-reference
+// bookkeeping isn't verified-correct in this hand-constructed object graph
+// caused a real SIGSEGV during ARC teardown (confirmed live via
+// agx_metal_api_compute_test: crashed with "Segmentation fault: 11" right
+// after printing "ALL CHECKS PASSED", i.e. during process exit / dealloc).
+@property (nonatomic, assign) InfernoCommandBuffer *commandBuffer;
 @end
 @implementation InfernoComputeCommandEncoder
 
