@@ -8,12 +8,9 @@
 int main(void)
 {
     @autoreleasepool {
-        NSArray<id<MTLDevice>> *devices = MTLCopyAllDevices();
-        printf("MTLCopyAllDevices() -> %lu device(s)\n", (unsigned long)devices.count);
-        for (id<MTLDevice> dev in devices) {
-            printf("  device: %s\n", dev.name.UTF8String);
-        }
-
+        // MTLCopyAllDevices() is macOS/macCatalyst-only (API_UNAVAILABLE(ios)
+        // in the real SDK header) -- MTLCreateSystemDefaultDevice() is the
+        // only enumeration entry point on iOS.
         id<MTLDevice> def = MTLCreateSystemDefaultDevice();
         if (def == nil) {
             printf("MTLCreateSystemDefaultDevice() -> nil\n");
