@@ -335,6 +335,16 @@ jobs:
           echo "--- linked libraries ---"
           otool -L out8/inferno_agx_bridge.dylib
 
+      - name: "Compile test_agx_bridge.m (dlopen+dlsym harness to validate the dylib on-device before the dyld cache patch)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation \
+            -o out8/test_agx_bridge src/userspace_test/test_agx_bridge.m
+          file out8/test_agx_bridge
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
