@@ -55,16 +55,28 @@
 // A small test FIFO ring, placed at a fixed offset within the same 4KB
 // COMMON_BASE carve (well clear of gMetaClass/scratch above), used only to
 // verify the device's packet-framing/ring-math end to end -- not part of the
-// real driver's eventual FIFO usage. COMMON_BASE's own page is confirmed
-// 16KB-aligned (0x8fc0c4000 physical, per resolve.py/QMP), so this offset
-// can be expressed directly as a byte offset within that one page without
-// needing a second physical page or any fragmentation handling.
+// real driver's eventual FIFO usage.
 #define FIFO_TEST_RING_OFFSET 0x400
 #define FIFO_TEST_RING_ADDR (0xfffffff1020c4000ULL + FIFO_TEST_RING_OFFSET)
-// PFN (14-bit/16KB page shift) of COMMON_BASE's own physical page --
-// physical address confirmed via resolve.py's documented virt->phys formula
-// (phys = virt - 0xfffffff006000000 + 0x800000000) = 0x8fc0c4000.
-#define FIFO_TEST_RING_BASE_PAGE (0x8fc0c4000ULL >> 14)
+// PFN (14-bit/16KB page shift) of COMMON_BASE's own physical page.
+//
+// NOT the same value the earlier "phys = virt - 0xfffffff006000000 +
+// 0x800000000" formula (used elsewhere in this project for the KERNEL
+// IMAGE's own addresses) produces for this address -- that formula gave
+// 0x8fc0c4000, which is WRONG here. Confirmed live via QEMU's own
+// authoritative `gva2gpa` HMP command (`gva2gpa 0xfffffff1020c4000`), the
+// real physical base is 0x8ceb1c000: the linear kernel-image physmap
+// formula does not extend to carved/reserved RAM outside the kernel
+// image's own footprint (exactly the caveat flagged, but never actually
+// tested, much earlier in this project) -- the device read the wrong
+// physical page entirely and silently found nothing, until this was caught
+// by comparing a QMP `xp` (physical) read against a `x` (virtual) read at
+// the address the guest actually wrote and finding they disagreed.
+//
+// This is carve-specific and may shift on any rebuild of Inferno/relink of
+// this kext (same caveat as CODE_BASE/COMMON_BASE elsewhere) -- always
+// reconfirm with `gva2gpa` before trusting it again.
+#define FIFO_TEST_RING_BASE_PAGE (0x8ceb1c000ULL >> 14)
 
 class InfernoVGPUHello : public IOService
 {
