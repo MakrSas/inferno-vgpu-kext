@@ -101,6 +101,7 @@ extern "C" uint64_t kvtophys(uintptr_t va);
 // See inferno-vgpu.h: forwarded near-verbatim to the host inferno-render-daemon
 // over a Unix socket by the QEMU device model.
 #define INFERNO_VGPU_OP_COMPUTE_DISPATCH 0x0002
+#define INFERNO_VGPU_OP_DRAW 0x0003
 
 class InfernoVGPUHello : public IOService
 {
@@ -121,9 +122,17 @@ public:
 	// the buffer-bytes region of the ring in place with the real dispatch
 	// result -- callers read it back via ringBase()/ringPayloadOffset().
 	uint32_t submitComputeDispatch(const uint8_t *payload, uint32_t payloadLen);
+	// Same idea, opcode INFERNO_VGPU_OP_DRAW: payload is vert AIR + frag AIR +
+	// vertex bytes + width/height/vertex_count (see inferno-vgpu.h). On
+	// success the device overwrites payload offset 0 in place with
+	// width*height*4 bytes of RGBA8 pixels -- caller reads them back from
+	// ringBase()+12 directly (no per-field offset math needed, unlike
+	// compute's buffer-in-place convention).
+	uint32_t submitDrawDispatch(const uint8_t *payload, uint32_t payloadLen);
 	static volatile uint8_t *ringBase(void) { return (volatile uint8_t *)FIFO_TEST_RING_ADDR; }
 
 private:
+	uint32_t submitPacket(uint16_t opcode, const uint8_t *payload, uint32_t payloadLen);
 	IOMemoryMap *fDeviceMap;
 };
 
@@ -214,7 +223,7 @@ void InfernoVGPUHello::submitTestFifoPacket(void)
 	regs[INFERNO_VGPU_REG_MAIN_KICK / 4] = 1;
 }
 
-uint32_t InfernoVGPUHello::submitComputeDispatch(const uint8_t *payload, uint32_t payloadLen)
+uint32_t InfernoVGPUHello::submitPacket(uint16_t opcode, const uint8_t *payload, uint32_t payloadLen)
 {
 	if (fDeviceMap == NULL) {
 		return 1;
@@ -228,8 +237,8 @@ uint32_t InfernoVGPUHello::submitComputeDispatch(const uint8_t *payload, uint32_
 	volatile uint8_t *packet = ringBase();
 	uint32_t totalSize = 12 + payloadLen;
 
-	packet[0] = INFERNO_VGPU_OP_COMPUTE_DISPATCH & 0xff;
-	packet[1] = (INFERNO_VGPU_OP_COMPUTE_DISPATCH >> 8) & 0xff;
+	packet[0] = opcode & 0xff;
+	packet[1] = (opcode >> 8) & 0xff;
 	packet[2] = 0;
 	packet[3] = 0;
 	packet[4] = totalSize & 0xff;
@@ -260,6 +269,16 @@ uint32_t InfernoVGPUHello::submitComputeDispatch(const uint8_t *payload, uint32_
 	return regs[0x103c / 4];
 }
 
+uint32_t InfernoVGPUHello::submitComputeDispatch(const uint8_t *payload, uint32_t payloadLen)
+{
+	return submitPacket(INFERNO_VGPU_OP_COMPUTE_DISPATCH, payload, payloadLen);
+}
+
+uint32_t InfernoVGPUHello::submitDrawDispatch(const uint8_t *payload, uint32_t payloadLen)
+{
+	return submitPacket(INFERNO_VGPU_OP_DRAW, payload, payloadLen);
+}
+
 class InfernoVGPUUserClient : public IOUserClient
 {
 	OSDeclareDefaultStructors(InfernoVGPUUserClient)
@@ -278,6 +297,8 @@ public:
 	                             IOExternalMethodArguments *arguments);
 	static IOReturn sComputeDispatch(InfernoVGPUUserClient *target, void *reference,
 	                                   IOExternalMethodArguments *arguments);
+	static IOReturn sDrawDispatch(InfernoVGPUUserClient *target, void *reference,
+	                                IOExternalMethodArguments *arguments);
 
 private:
 	InfernoVGPUHello *fProvider;
@@ -288,6 +309,7 @@ OSDefineMetaClassAndStructors(InfernoVGPUUserClient, IOUserClient)
 enum {
 	kInfernoVGPUMethodGetVersion = 0,
 	kInfernoVGPUMethodComputeDispatch = 1,
+	kInfernoVGPUMethodDrawDispatch = 2,
 	kInfernoVGPUMethodCount
 };
 
@@ -306,6 +328,8 @@ enum {
 static const IOExternalMethodDispatch sInfernoVGPUMethods[kInfernoVGPUMethodCount] = {
 	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sGetVersion, 0, 0, 1, 0 },
 	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sComputeDispatch, 0,
+	  kIOUCVariableStructureSize, 0, kIOUCVariableStructureSize },
+	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sDrawDispatch, 0,
 	  kIOUCVariableStructureSize, 0, kIOUCVariableStructureSize },
 };
 
@@ -419,6 +443,70 @@ IOReturn InfernoVGPUUserClient::sComputeDispatch(InfernoVGPUUserClient *target,
 			out[i] = ring[resultOff + i];
 		}
 		arguments->structureOutputSize = bufLen;
+	} else {
+		arguments->structureOutputSize = 0;
+	}
+
+	return (status == 0) ? kIOReturnSuccess : kIOReturnIOError;
+}
+
+// Input wire format (inferno-vgpu.h): u32 vert_air_len, vert_air_bytes[padded],
+// u32 frag_air_len, frag_air_bytes[padded], u32 vbuf_len, vbuf_bytes[padded],
+// u32 width, u32 height, u32 vertex_count. Kicks a real INFERNO_VGPU_OP_DRAW
+// through the provider, then copies width*height*4 RGBA8 bytes back out of
+// the ring's payload-start region (the device overwrites payload offset 0 in
+// place -- see submitDrawDispatch/inferno-vgpu.h).
+IOReturn InfernoVGPUUserClient::sDrawDispatch(InfernoVGPUUserClient *target,
+                                                void *reference,
+                                                IOExternalMethodArguments *arguments)
+{
+	if (target == NULL || target->fProvider == NULL) {
+		return kIOReturnNotReady;
+	}
+
+	const uint8_t *in = (const uint8_t *)arguments->structureInput;
+	uint32_t inSize = arguments->structureInputSize;
+	if (in == NULL || inSize < 8) {
+		return kIOReturnBadArgument;
+	}
+
+	uint32_t off = 0;
+	uint32_t vertAirLen = in[off] | (in[off+1]<<8) | (in[off+2]<<16) | (in[off+3]<<24);
+	off += 4 + ((vertAirLen + 3) & ~3u);
+	if (off + 4 > inSize) {
+		return kIOReturnBadArgument;
+	}
+	uint32_t fragAirLen = in[off] | (in[off+1]<<8) | (in[off+2]<<16) | (in[off+3]<<24);
+	off += 4 + ((fragAirLen + 3) & ~3u);
+	if (off + 4 > inSize) {
+		return kIOReturnBadArgument;
+	}
+	uint32_t vbufLen = in[off] | (in[off+1]<<8) | (in[off+2]<<16) | (in[off+3]<<24);
+	off += 4 + ((vbufLen + 3) & ~3u);
+	if (off + 12 > inSize) {
+		return kIOReturnBadArgument;
+	}
+	uint32_t width = in[off] | (in[off+1]<<8) | (in[off+2]<<16) | (in[off+3]<<24);
+	uint32_t height = in[off+4] | (in[off+5]<<8) | (in[off+6]<<16) | (in[off+7]<<24);
+	// vertex_count at off+8, not needed here -- the device parses it, not us.
+
+	uint32_t pixelBytes = width * height * 4;
+	if (pixelBytes == 0 || pixelBytes > inSize) {
+		// Output must fit within the same payload region it overwrites --
+		// see inferno-vgpu.h's documented constraint.
+		return kIOReturnBadArgument;
+	}
+
+	uint32_t status = target->fProvider->submitDrawDispatch(in, inSize);
+
+	if (status == 0 && arguments->structureOutput != NULL &&
+	   arguments->structureOutputSize >= pixelBytes) {
+		volatile uint8_t *ring = InfernoVGPUHello::ringBase();
+		uint8_t *out = (uint8_t *)arguments->structureOutput;
+		for (uint32_t i = 0; i < pixelBytes; i++) {
+			out[i] = ring[12 + i];
+		}
+		arguments->structureOutputSize = pixelBytes;
 	} else {
 		arguments->structureOutputSize = 0;
 	}
