@@ -229,8 +229,17 @@ enum {
 	kInfernoVGPUMethodCount
 };
 
+// IOExternalMethodDispatch = { function, checkScalarInputCount,
+// checkStructureInputSize, checkScalarOutputCount, checkStructureOutputSize }.
+// sGetVersion takes no input and returns exactly 1 scalar output
+// (arguments->scalarOutput[0]) -- the last two fields here were transposed
+// (0 scalar-out, 1 structure-out) which made IOUserClient::externalMethod's
+// own built-in argument-count validation reject every real call with
+// kIOReturnBadArgument before sGetVersion ever ran, confirmed live via
+// IOConnectCallScalarMethod(..., &version, &outputCount=1) failing with
+// 0xe00002c2 despite IOServiceOpen() itself succeeding.
 static const IOExternalMethodDispatch sInfernoVGPUMethods[kInfernoVGPUMethodCount] = {
-	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sGetVersion, 0, 0, 0, 1 },
+	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sGetVersion, 0, 0, 1, 0 },
 };
 
 bool InfernoVGPUUserClient::initWithTask(task_t owningTask, void *securityID,
