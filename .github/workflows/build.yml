@@ -206,3 +206,29 @@ jobs:
           name: iokit-class-object
           path: out3/
           if-no-files-found: warn
+
+  userspace-test-probe:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile the userspace IOServiceOpen/GetVersion test binary (real userspace, not -mkernel)
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out4
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" \
+            -framework IOKit -framework CoreFoundation \
+            -o out4/inferno_vgpu_test src/userspace_test/inferno_vgpu_test.c
+          file out4/inferno_vgpu_test
+          otool -hv out4/inferno_vgpu_test
+          echo "--- linked libraries ---"
+          otool -L out4/inferno_vgpu_test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: userspace-test-binary
+          path: out4/
+          if-no-files-found: warn
