@@ -127,6 +127,18 @@ bool InfernoVGPUHello::start(IOService *provider)
 	setProperty("IOMatchCategory", "IOAcceleratorES");
 	setProperty("MetalPluginName", "InfernoVGPUMetal");
 	setProperty("MetalPluginClassName", "InfernoVGPUMetalDevice");
+	// IOServiceOpen() was returning kIOReturnNotPermitted (0xe00002e2) even
+	// though newUserClient() reliably returns kIOReturnSuccess with a valid
+	// handler (confirmed via a marker at the exact return statement) --
+	// is_io_service_open_extended() itself never loads that error constant,
+	// so it's coming from a post-newUserClient() check elsewhere in the
+	// open path. The standard, Apple-documented way IOKit services declare
+	// their user client class is this property; older manual newUserClient()
+	// overrides like ours technically instantiate the client themselves
+	// without needing it, but its *absence* may be what an entitlement/
+	// consistency check elsewhere in this path is reading as "denied"
+	// rather than "unrestricted".
+	setProperty("IOUserClientClass", "InfernoVGPUUserClient");
 
 	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
 		INFERNO_VGPU_PHYS_BASE, INFERNO_VGPU_MMIO_SIZE, kIODirectionInOut);
