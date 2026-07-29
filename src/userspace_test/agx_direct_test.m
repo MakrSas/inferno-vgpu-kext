@@ -9,6 +9,7 @@
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
 #import <Metal/Metal.h>
+#import <dlfcn.h>
 
 int main(void)
 {
@@ -42,6 +43,13 @@ int main(void)
             return 1;
         }
         printf("IOServiceOpen succeeded, connection=0x%x\n", conn);
+
+        // AGXMetalA13's cache image is lazily mapped -- our process never
+        // links against it, so its classes aren't visible until something
+        // dlopen()s that path (matches how Metal's own now-disabled bundle
+        // loader would have done this).
+        void *handle = dlopen("/System/Library/Extensions/AGXMetalA13.bundle/AGXMetalA13", RTLD_NOW);
+        printf("dlopen -> %p (%s)\n", handle, handle ? "ok" : dlerror());
 
         Class agxClass = NSClassFromString(@"AGXPrincipalDevice");
         printf("AGXPrincipalDevice class -> %p\n", (__bridge void *)agxClass);
