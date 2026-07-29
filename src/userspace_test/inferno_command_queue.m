@@ -93,7 +93,14 @@ static const uint32_t kInfernoExternalMethodPing = 0;
 
 @interface InfernoCommandQueue : NSObject
 @property (nonatomic, assign) io_connect_t vgpuConnection;
-@property (nonatomic, weak) id<MTLDevice> device;
+// `assign`, not `weak`: the device is a hand-constructed AGXPrincipalDevice
+// instance (alloc'd + inited via a manually-invoked IMP, then deliberately
+// leaked forever by Q()'s __bridge_retained return) -- its weak-reference
+// bookkeeping isn't something we've verified is fully set up correctly, and
+// since the device outlives everything here anyway, `weak` buys nothing but
+// risk. Suspected (not yet confirmed) cause of a SIGSEGV during ARC
+// teardown at process exit -- see project memory.
+@property (nonatomic, assign) id<MTLDevice> device;
 @property (nonatomic, copy) NSString *label;
 @end
 
@@ -154,7 +161,8 @@ void InfernoInstallCommandQueueFallback(id device)
 @interface InfernoBuffer : NSObject
 @property (nonatomic, assign) void *storage;
 @property (nonatomic, assign) NSUInteger length;
-@property (nonatomic, weak) id<MTLDevice> device;
+// `assign`, not `weak` -- same reasoning as InfernoCommandQueue.device above.
+@property (nonatomic, assign) id<MTLDevice> device;
 @property (nonatomic, copy) NSString *label;
 @end
 
