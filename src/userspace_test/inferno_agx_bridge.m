@@ -21,26 +21,82 @@
 // this must stay additive, never override a real Apple implementation.
 static NSString *InfernoAGXName(id self, SEL _cmd)
 {
-    (void)self;
-    (void)_cmd;
+    (void)self; (void)_cmd;
     return @"Inferno AGX";
 }
 
-// Defined in inferno_command_queue.m -- gives -newCommandQueue a real,
-// non-crashing implementation backed by our own inferno-vgpu IOKit
-// connection instead of AGXPrincipalDevice's (nonfunctional, given
-// Inferno's current AGX register emulation) real hardware path.
+static NSString *InfernoAGXVendorName(id self, SEL _cmd)
+{
+    (void)self; (void)_cmd;
+    return @"Inferno";
+}
+
+static unsigned long long InfernoAGXRegistryID(id self, SEL _cmd)
+{
+    (void)self; (void)_cmd;
+    return 0x494e464552ULL;  // "INFER" -- placeholder, no real IORegistry entry ID wired up yet.
+}
+
+static _Bool InfernoAGXYes(id self, SEL _cmd) { (void)self; (void)_cmd; return 1; }
+static _Bool InfernoAGXNo(id self, SEL _cmd) { (void)self; (void)_cmd; return 0; }
+
+static unsigned long long InfernoAGXMaxBufferLength(id self, SEL _cmd)
+{
+    (void)self; (void)_cmd;
+    return 256ULL * 1024 * 1024;
+}
+
+static unsigned long long InfernoAGXRecommendedWorkingSet(id self, SEL _cmd)
+{
+    (void)self; (void)_cmd;
+    return 512ULL * 1024 * 1024;
+}
+
+static unsigned long long InfernoAGXZero64(id self, SEL _cmd) { (void)self; (void)_cmd; return 0; }
+
+// No real GPU-family/feature-set support exists yet (Inferno's AGX register
+// emulation isn't functional -- see project memory) -- honestly reporting
+// NO for every family is the safe answer; claiming support we can't back
+// would just move the crash further downstream.
+static _Bool InfernoAGXSupportsFamily(id self, SEL _cmd, long long family)
+{
+    (void)self; (void)_cmd; (void)family;
+    return 0;
+}
+
+// Defined in inferno_command_queue.m -- give -newCommandQueue and
+// -newBufferWithLength:options: real, non-crashing implementations backed
+// by our own inferno-vgpu IOKit connection / host memory, instead of
+// AGXPrincipalDevice's (nonfunctional, given Inferno's current AGX register
+// emulation) real hardware path.
 extern void InfernoAssociateVGPUConnection(id device, io_connect_t conn);
 extern void InfernoInstallCommandQueueFallback(id device);
+extern void InfernoInstallBufferFallback(id device);
+
+static void InfernoAddIfMissing(id device, SEL sel, IMP imp, const char *types)
+{
+    if (![device respondsToSelector:sel]) {
+        class_addMethod(object_getClass(device), sel, imp, types);
+    }
+}
 
 static void InfernoPatchMissingDeviceMethods(id device, io_connect_t conn)
 {
-    Class cls = object_getClass(device);
-    if (![device respondsToSelector:@selector(name)]) {
-        class_addMethod(cls, @selector(name), (IMP)InfernoAGXName, "@@:");
-    }
+    InfernoAddIfMissing(device, @selector(name), (IMP)InfernoAGXName, "@@:");
+    InfernoAddIfMissing(device, @selector(vendorName), (IMP)InfernoAGXVendorName, "@@:");
+    InfernoAddIfMissing(device, @selector(registryID), (IMP)InfernoAGXRegistryID, "Q@:");
+    InfernoAddIfMissing(device, @selector(hasUnifiedMemory), (IMP)InfernoAGXYes, "B@:");
+    InfernoAddIfMissing(device, @selector(isLowPower), (IMP)InfernoAGXNo, "B@:");
+    InfernoAddIfMissing(device, @selector(isHeadless), (IMP)InfernoAGXNo, "B@:");
+    InfernoAddIfMissing(device, @selector(isRemovable), (IMP)InfernoAGXNo, "B@:");
+    InfernoAddIfMissing(device, @selector(maxBufferLength), (IMP)InfernoAGXMaxBufferLength, "Q@:");
+    InfernoAddIfMissing(device, @selector(recommendedMaxWorkingSetSize), (IMP)InfernoAGXRecommendedWorkingSet, "Q@:");
+    InfernoAddIfMissing(device, @selector(currentAllocatedSize), (IMP)InfernoAGXZero64, "Q@:");
+    InfernoAddIfMissing(device, @selector(supportsFamily:), (IMP)InfernoAGXSupportsFamily, "B@:q");
+
     InfernoAssociateVGPUConnection(device, conn);
     InfernoInstallCommandQueueFallback(device);
+    InfernoInstallBufferFallback(device);
 }
 
 // Exported as "Q": the raw machine-code patch in

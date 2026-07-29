@@ -146,3 +146,64 @@ void InfernoInstallCommandQueueFallback(id device)
                          (IMP)InfernoAGXNewCommandQueue, "@@:");
     }
 }
+
+// Real MTLBuffer: host-memory-backed (malloc), so -contents/-length are
+// genuinely usable by callers (CPU-side read/write works today; there's no
+// GPU-side texture/render path yet to consume it, but this is a correct,
+// non-fake building block for whenever that exists).
+@interface InfernoBuffer : NSObject
+@property (nonatomic, assign) void *storage;
+@property (nonatomic, assign) NSUInteger length;
+@property (nonatomic, weak) id<MTLDevice> device;
+@property (nonatomic, copy) NSString *label;
+@end
+
+@implementation InfernoBuffer
+
+- (instancetype)initWithLength:(NSUInteger)length device:(id<MTLDevice>)device
+{
+    self = [super init];
+    if (self == nil) {
+        return nil;
+    }
+    _storage = calloc(1, length);
+    if (_storage == NULL) {
+        return nil;
+    }
+    _length = length;
+    _device = device;
+    return self;
+}
+
+- (void)dealloc
+{
+    free(_storage);
+}
+
+- (void *)contents
+{
+    return _storage;
+}
+
+- (void)didModifyRange:(NSRange)range
+{
+    (void)range;  // host-memory-backed -- nothing to flush.
+}
+
+@end
+
+static id InfernoAGXNewBufferWithLength(id self, SEL _cmd, NSUInteger length, NSUInteger options)
+{
+    (void)_cmd;
+    (void)options;
+    return [[InfernoBuffer alloc] initWithLength:length device:self];
+}
+
+void InfernoInstallBufferFallback(id device)
+{
+    Class cls = object_getClass(device);
+    SEL sel = @selector(newBufferWithLength:options:);
+    if (![device respondsToSelector:sel]) {
+        class_addMethod(cls, sel, (IMP)InfernoAGXNewBufferWithLength, "@@:QQ");
+    }
+}
