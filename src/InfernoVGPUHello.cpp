@@ -45,6 +45,15 @@
 // can ever be correct here; it must be looked up fresh every boot.
 extern "C" uint64_t kvtophys(uintptr_t va);
 
+// Markers for the first real-userspace test (IOServiceOpen -> newUserClient
+// -> externalMethod -> GetVersion): written unconditionally the moment each
+// stage is genuinely reached, independent of what the userspace caller does
+// with any return value or whether its own stdout goes anywhere observable.
+// Distinct offsets from every earlier scratch use in this file (0x40/0x100/
+// 0x108/0x110/0x200/0x300/0x400-0x40c).
+#define USERSPACE_NEWCLIENT_MARKER_ADDR 0xfffffff1020c4500ULL
+#define USERSPACE_GETVERSION_MARKER_ADDR 0xfffffff1020c4508ULL
+
 // inferno-vgpu-v1's MMIO base, as mapped by t8030_create_inferno_vgpu_node()
 // in this exact QEMU build/machine config (kaslr-off=true, fixed device
 // tree) -- confirmed empirically via QMP `info mtree` showing
@@ -242,6 +251,12 @@ IOReturn InfernoVGPUUserClient::sGetVersion(InfernoVGPUUserClient *target,
                                              void *reference,
                                              IOExternalMethodArguments *arguments)
 {
+	// Written unconditionally the moment a real userspace caller's
+	// externalMethod dispatch genuinely reaches here -- observable via QMP
+	// regardless of whether the calling process's own stdout goes anywhere
+	// visible.
+	*(volatile uint32_t *)USERSPACE_GETVERSION_MARKER_ADDR = 0xB00B1E5;
+
 	if (target == NULL || target->fProvider == NULL) {
 		return kIOReturnNotReady;
 	}
@@ -254,6 +269,10 @@ IOReturn InfernoVGPUHello::newUserClient(task_t owningTask, void *securityID,
                                           UInt32 type, OSDictionary *properties,
                                           IOUserClient **handler)
 {
+	// Same idea: proves IOServiceOpen really reached newUserClient() from
+	// real userspace, independent of everything that follows.
+	*(volatile uint32_t *)USERSPACE_NEWCLIENT_MARKER_ADDR = 0xCAFEF00D;
+
 	InfernoVGPUUserClient *client = OSTypeAlloc(InfernoVGPUUserClient);
 
 	if (client == NULL) {
