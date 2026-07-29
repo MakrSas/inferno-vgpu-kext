@@ -10,8 +10,29 @@
 
 @implementation InfernoVGPUMetalDevice
 
++ (void)load
+{
+    // Called automatically by the ObjC runtime the moment this bundle's
+    // image is dlopen'd/mapped in, regardless of whether Metal calls
+    // anything on the class at all -- the earliest possible signal that
+    // Metal's plugin loader even found and loaded this bundle file.
+    FILE *f = fopen("/private/var/tmp/inferno_bundle_load_called", "w");
+    if (f != NULL) {
+        fclose(f);
+    }
+}
+
 + (void)registerDevices
 {
+    // Marker-by-file (not the kernel COMMON_BASE scratch trick used
+    // elsewhere in this project -- that's a kernel VA, not mapped into any
+    // userspace process) to check, from outside, whether Metal's plugin
+    // loader is even calling this at all.
+    FILE *f = fopen("/private/var/tmp/inferno_registerDevices_called", "w");
+    if (f != NULL) {
+        fclose(f);
+    }
+
     // Called by Metal's generic plugin loader once it has instantiated a
     // class matching this bundle's MetalPluginClassName and confirmed it
     // conforms to MTLDeviceSPI. Real device registration (letting Metal
@@ -23,6 +44,11 @@
 
 - (instancetype)init
 {
+    FILE *mf = fopen("/private/var/tmp/inferno_init_called", "w");
+    if (mf != NULL) {
+        fclose(mf);
+    }
+
     self = [super init];
     if (self == nil) {
         return nil;
