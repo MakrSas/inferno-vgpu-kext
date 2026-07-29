@@ -28,6 +28,27 @@
 - (void)setCommandBuffer:(id)commandBuffer;
 @end
 
+// The weak->assign fix on InfernoComputeCommandEncoder.commandBuffer (see
+// project memory) did NOT stop the SIGSEGV-on-exit -- confirmed live,
+// crashes identically after "ALL CHECKS PASSED" with the fix deployed. Root
+// cause is still unidentified somewhere in this hand-built object graph's
+// ARC dealloc chain (Q()'s own device already permanently leaks itself for
+// exactly this class of reason -- see inferno_agx_bridge.m -- and never
+// crashes). Rather than keep guessing at individual properties, apply the
+// same proven-safe strategy uniformly: every object this file hands back to
+// a caller gets one extra, permanent CoreFoundation-level retain, so ARC
+// never actually deallocates it and whatever is broken in that path never
+// runs. Deliberate, matches Q()'s existing pattern -- not a general fix for
+// production use, but correct for this project's actual current need
+// (short-lived test/diagnostic processes, not a long-running app).
+static id InfernoLeakForever(id obj)
+{
+    if (obj != nil) {
+        CFBridgingRetain(obj);
+    }
+    return obj;
+}
+
 // Mirrors InfernoVGPUUserClient's external-method index 0 (sGetVersion) --
 // the only opcode proven end-to-end this session (inferno_vgpu_test). Real
 // command-encoding opcodes don't exist yet; committing just exercises this
@@ -149,7 +170,7 @@ static NSData *InfernoSendComputeDispatch(io_connect_t conn, NSData *air,
     // isn't visible yet at this point in the file (only forward-declared),
     // so a statically-typed local would need its property/message sends
     // known here too -- plain `id` messaging skips that check entirely.
-    id enc = [NSClassFromString(@"InfernoComputeCommandEncoder") new];
+    id enc = InfernoLeakForever([NSClassFromString(@"InfernoComputeCommandEncoder") new]);
     [enc setCommandBuffer:self];
     return enc;
 }
@@ -184,7 +205,7 @@ static NSData *InfernoSendComputeDispatch(io_connect_t conn, NSData *air,
 
 - (id)commandBuffer
 {
-    return [[InfernoCommandBuffer alloc] initWithConnection:_vgpuConnection];
+    return InfernoLeakForever([[InfernoCommandBuffer alloc] initWithConnection:_vgpuConnection]);
 }
 
 - (id)commandBufferWithUnretainedReferences
@@ -207,7 +228,7 @@ static id InfernoAGXNewCommandQueue(id self, SEL _cmd)
     (void)_cmd;
     NSNumber *connNum = objc_getAssociatedObject(self, kInfernoVGPUConnKey);
     io_connect_t conn = connNum ? (io_connect_t)connNum.unsignedIntValue : IO_OBJECT_NULL;
-    return [[InfernoCommandQueue alloc] initWithDevice:self connection:conn];
+    return InfernoLeakForever([[InfernoCommandQueue alloc] initWithDevice:self connection:conn]);
 }
 
 void InfernoInstallCommandQueueFallback(id device)
@@ -269,7 +290,7 @@ static id InfernoAGXNewBufferWithLength(id self, SEL _cmd, NSUInteger length, NS
 {
     (void)_cmd;
     (void)options;
-    return [[InfernoBuffer alloc] initWithLength:length device:self];
+    return InfernoLeakForever([[InfernoBuffer alloc] initWithLength:length device:self]);
 }
 
 void InfernoInstallBufferFallback(id device)
@@ -309,7 +330,7 @@ void InfernoInstallBufferFallback(id device)
     InfernoFunction *fn = [InfernoFunction new];
     fn.name = name;
     fn.air = _air;
-    return fn;
+    return InfernoLeakForever(fn);
 }
 @end
 
@@ -400,7 +421,7 @@ static id InfernoAGXNewLibraryWithData(id self, SEL _cmd, dispatch_data_t data, 
     });
     InfernoLibrary *lib = [InfernoLibrary new];
     lib.air = bytes;
-    return lib;
+    return InfernoLeakForever(lib);
 }
 
 static id InfernoAGXNewComputePipelineState(id self, SEL _cmd, id function, NSError **error)
@@ -411,7 +432,7 @@ static id InfernoAGXNewComputePipelineState(id self, SEL _cmd, id function, NSEr
     }
     InfernoComputePipelineState *pso = [InfernoComputePipelineState new];
     pso.function = function;
-    return pso;
+    return InfernoLeakForever(pso);
 }
 
 void InfernoInstallComputeFallback(id device)
