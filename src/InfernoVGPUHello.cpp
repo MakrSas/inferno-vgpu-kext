@@ -53,6 +53,11 @@ extern "C" uint64_t kvtophys(uintptr_t va);
 // 0x108/0x110/0x200/0x300/0x400-0x40c).
 #define USERSPACE_NEWCLIENT_MARKER_ADDR 0xfffffff1020c4500ULL
 #define USERSPACE_GETVERSION_MARKER_ADDR 0xfffffff1020c4508ULL
+// Diagnostics for InfernoVGPUUserClient::start() -- IOServiceOpen was
+// returning kIOReturnError from newUserClient()'s `!client->start(this)`
+// branch; these pin down exactly which of the two ways start() can fail.
+#define USERSPACE_SUPERSTART_MARKER_ADDR 0xfffffff1020c4510ULL
+#define USERSPACE_DYNCAST_MARKER_ADDR 0xfffffff1020c4518ULL
 
 // inferno-vgpu-v1's MMIO base, as mapped by t8030_create_inferno_vgpu_node()
 // in this exact QEMU build/machine config (kaslr-off=true, fixed device
@@ -221,10 +226,13 @@ bool InfernoVGPUUserClient::initWithTask(task_t owningTask, void *securityID,
 
 bool InfernoVGPUUserClient::start(IOService *provider)
 {
-	if (!IOUserClient::start(provider)) {
+	bool superOk = IOUserClient::start(provider);
+	*(volatile uint32_t *)USERSPACE_SUPERSTART_MARKER_ADDR = superOk ? 1u : 2u;
+	if (!superOk) {
 		return false;
 	}
 	fProvider = OSDynamicCast(InfernoVGPUHello, provider);
+	*(volatile uint32_t *)USERSPACE_DYNCAST_MARKER_ADDR = (fProvider != NULL) ? 1u : 2u;
 	return fProvider != NULL;
 }
 
