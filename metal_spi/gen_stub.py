@@ -153,7 +153,14 @@ def main():
     out.append("// Struct-return typedefs -- see the comment above STRUCT_TYPEDEFS in gen_stub.py.\n")
     for struct_text, name in STRUCT_TYPEDEFS.items():
         out.append(f"typedef {struct_text} {name};\n")
-    out.append("\n@implementation InfernoVGPUMetalDevice\n\n")
+    # A category, not a second primary @implementation -- two
+    # @implementation blocks for the same class (this one + the hand-written
+    # InfernoVGPUMetalDevice.m) each emit the class/metaclass/ivar-layout
+    # symbols, causing "duplicate symbol" at link time. A category adds
+    # methods to the same class from a separate translation unit without
+    # redeclaring any of that (it just can't add new ivars, which this file
+    # never needs to).
+    out.append("\n@implementation InfernoVGPUMetalDevice (Generated)\n\n")
     out.extend(body_lines)
     out.append("\n@end\n")
 

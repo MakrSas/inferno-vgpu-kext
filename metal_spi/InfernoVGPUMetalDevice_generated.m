@@ -17,7 +17,7 @@ typedef struct { unsigned long long x0; unsigned long long x1; } InfernoStructRe
 typedef struct { unsigned int x0; unsigned int x1; } InfernoStructRet2;
 typedef struct IndirectArgumentBufferCapabilities { unsigned int x0:1; unsigned int x1:1; unsigned int x2:1; unsigned int x3:29; } InfernoStructRet3;
 
-@implementation InfernoVGPUMetalDevice
+@implementation InfernoVGPUMetalDevice (Generated)
 
 - (_Bool)supportsFeatureSet:(unsigned long long)set { return NO; }
 - (id)newComputePipelineStateWithFunction:(id)function error:(id *)error { return nil; }
