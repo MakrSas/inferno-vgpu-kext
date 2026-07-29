@@ -11,7 +11,11 @@
 #import <Metal/Metal.h>
 #import <dlfcn.h>
 
-void *InfernoGetAGXDevice(void)
+// Exported as "Q": the raw machine-code patch in
+// ___MTLCreateSystemDefaultDevice_block_invoke has ~21 free instructions
+// (see patch_block_invoke.py) and dlsym's symbol-name string is built
+// on-stack via a single MOVZ immediate, which only fits a 1-2 char name.
+void *Q(void)
 {
     @autoreleasepool {
         CFMutableDictionaryRef matching = IOServiceMatching(kIOServiceClass);

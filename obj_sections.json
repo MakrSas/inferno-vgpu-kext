@@ -1,0 +1,56 @@
+[
+  {
+    "sectname": "__text",
+    "segname": "__TEXT",
+    "addr": 0,
+    "size": 4756,
+    "offset": 712,
+    "reloff": 10912,
+    "nreloc": 117
+  },
+  {
+    "sectname": "__common",
+    "segname": "__DATA",
+    "addr": 10200,
+    "size": 80,
+    "offset": 0,
+    "reloff": 0,
+    "nreloc": 0
+  },
+  {
+    "sectname": "__const",
+    "segname": "__DATA",
+    "addr": 4760,
+    "size": 5256,
+    "offset": 5472,
+    "reloff": 11848,
+    "nreloc": 643
+  },
+  {
+    "sectname": "__cstring",
+    "segname": "__TEXT",
+    "addr": 10016,
+    "size": 166,
+    "offset": 10728,
+    "reloff": 0,
+    "nreloc": 0
+  },
+  {
+    "sectname": "__mod_init_func",
+    "segname": "__DATA",
+    "addr": 10184,
+    "size": 8,
+    "offset": 10896,
+    "reloff": 16992,
+    "nreloc": 1
+  },
+  {
+    "sectname": "__mod_term_func",
+    "segname": "__DATA",
+    "addr": 10192,
+    "size": 8,
+    "offset": 10904,
+    "reloff": 17000,
+    "nreloc": 1
+  }
+]

@@ -7,18 +7,18 @@
 
 int main(void)
 {
-    void *handle = dlopen("/usr/lib/inferno_agx_bridge.dylib", RTLD_NOW);
+    void *handle = dlopen("/b", RTLD_NOW);
     if (handle == NULL) {
         printf("dlopen failed: %s\n", dlerror());
         return 1;
     }
-    void *(*fn)(void) = (void *(*)(void))dlsym(handle, "InfernoGetAGXDevice");
+    void *(*fn)(void) = (void *(*)(void))dlsym(handle, "Q");
     if (fn == NULL) {
         printf("dlsym failed: %s\n", dlerror());
         return 1;
     }
     void *device = fn();
-    printf("InfernoGetAGXDevice() -> %p\n", device);
+    printf("Q() -> %p\n", device);
     if (device == NULL) {
         return 1;
     }
