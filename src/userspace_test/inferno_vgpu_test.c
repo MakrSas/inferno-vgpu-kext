@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <IOKit/IOKitLib.h>
+#include <CoreFoundation/CoreFoundation.h>
 
 // Must match InfernoVGPUUserClient's kInfernoVGPUMethodGetVersion (=0) in
 // src/InfernoVGPUHello.cpp.
@@ -31,14 +32,24 @@ int main(void)
     // IOServiceMatching(class) makes IOService::copyExistingServices() take
     // the OSMetaClass::applyToInstancesOfClassName() fast path, which faults
     // (NULL deref reading the found OSMetaClass's className field) against
-    // our hand-linked class -- use IONameMatch instead, which walks the live
-    // IORegistry tree (IOService::registerService() defaults an instance's
-    // name to its class name, so this still finds InfernoVGPUHello).
-    CFMutableDictionaryRef matching = IOServiceNameMatching("InfernoVGPUHello");
+    // our hand-linked class. IOServiceNameMatching() doesn't crash but also
+    // doesn't match -- InfernoVGPUHello never calls setName(), so getName()
+    // isn't "InfernoVGPUHello". Match on the MetalPluginClassName property
+    // instead (set in start(), see InfernoVGPUHello.cpp) -- this walks the
+    // live IORegistry tree via IOService::passiveMatch's generic property
+    // dictionary path, matching this project's own known-good properties.
+    CFMutableDictionaryRef matching = IOServiceMatching(kIOServiceClass);
     if (matching == NULL) {
-        fprintf(stderr, "IOServiceNameMatching failed\n");
+        fprintf(stderr, "IOServiceMatching failed\n");
         return 1;
     }
+    CFMutableDictionaryRef props = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(props, CFSTR("MetalPluginClassName"),
+                          CFSTR("InfernoVGPUMetalDevice"));
+    CFDictionarySetValue(matching, CFSTR(kIOPropertyMatchKey), props);
+    CFRelease(props);
 
     // kIOMasterPortDefault is unavailable on iOS -- MACH_PORT_NULL is the
     // modern, SDK-version-agnostic way to say "use the default main port"
