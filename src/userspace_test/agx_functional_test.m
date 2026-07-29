@@ -41,11 +41,14 @@ int main(void)
         NSString *name = device.name;
         CHECK(name != nil && name.length > 0, "device.name = %s", name.UTF8String ?: "(nil)");
 
-        // vendorName is MTLDeviceSPI-only, not in the public MTLDevice
-        // protocol the SDK headers declare -- message via `id` to skip
-        // static protocol checking (we know at runtime it responds, since
-        // we installed it ourselves via class_addMethod).
-        NSString *vendor = [(id)device vendorName];
+        // vendorName is MTLDeviceSPI-only -- no declaration of it exists in
+        // any imported header, so even an `id`-typed direct message send is
+        // a hard compile error ("no known instance method"). performSelector:
+        // sidesteps this: it's a real, declared NSObject method whose return
+        // type is always `id`, so the compiler never needs to know
+        // vendorName's real signature (we know at runtime it responds,
+        // since we installed it ourselves via class_addMethod).
+        NSString *vendor = [(id)device performSelector:@selector(vendorName)];
         CHECK(vendor != nil, "device.vendorName = %s", vendor.UTF8String ?: "(nil)");
 
         unsigned long long regID = device.registryID;
