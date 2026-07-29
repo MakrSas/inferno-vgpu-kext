@@ -10,6 +10,29 @@
 #import <IOKit/IOKitLib.h>
 #import <Metal/Metal.h>
 #import <dlfcn.h>
+#import <objc/runtime.h>
+
+// Our -initWithAcceleratorPort: patch (see project memory) is `return self`,
+// skipping whatever real setup Apple's internal build had disabled -- so
+// some MTLDevice protocol methods the real init would have wired up (e.g.
+// -name) come back "unrecognized selector" on the constructed instance.
+// Patch in safe, minimal fallbacks for the ones callers are likely to hit
+// immediately, but only if the class doesn't already implement them --
+// this must stay additive, never override a real Apple implementation.
+static NSString *InfernoAGXName(id self, SEL _cmd)
+{
+    (void)self;
+    (void)_cmd;
+    return @"Inferno AGX";
+}
+
+static void InfernoPatchMissingDeviceMethods(id device)
+{
+    Class cls = object_getClass(device);
+    if (![device respondsToSelector:@selector(name)]) {
+        class_addMethod(cls, @selector(name), (IMP)InfernoAGXName, "@@:");
+    }
+}
 
 // Exported as "Q": the raw machine-code patch in
 // ___MTLCreateSystemDefaultDevice_block_invoke has ~21 free instructions
@@ -70,6 +93,7 @@ void *Q(void)
         if (inited == nil) {
             return NULL;
         }
+        InfernoPatchMissingDeviceMethods(inited);
 
         // Leak deliberately (CFBridgingRetain / +1 retain): the raw machine
         // code patch calling this has no ARC and just wants a plain,
