@@ -289,3 +289,26 @@ jobs:
           name: metal-probe-binary
           path: out6/
           if-no-files-found: warn
+
+  agx-direct-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile the direct AGXPrincipalDevice initWithAcceleratorPort: probe
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out7
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal -framework IOKit \
+            -o out7/agx_direct_test src/userspace_test/agx_direct_test.m
+          file out7/agx_direct_test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agx-direct-test-binary
+          path: out7/
+          if-no-files-found: warn
