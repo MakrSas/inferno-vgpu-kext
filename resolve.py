@@ -514,6 +514,21 @@ def main():
             "base_vtable_va": 0xfffffff0077001e0,  # real __ZTV9IOService
             "destructor_syms": ("__ZN16InfernoVGPUHelloD1Ev", "__ZN16InfernoVGPUHelloD0Ev"),
             "overrides": {
+                # NOTE: getMetaClass() (slot 7) was tried here to fix
+                # OSDynamicCast() on our objects (see project memory), and it
+                # DID fix that -- but caused watchdog panics under normal
+                # idle load some time after boot, twice, only with that
+                # patch present. Reverted: something else in the kernel's
+                # own housekeeping evidently also walks live services'
+                # metaclasses via this slot and doesn't tolerate whatever's
+                # still wrong deeper in our hand-linked OSMetaClass instance
+                # (same underlying issue as the applyToInstancesOfClassName
+                # crash). Worked around at the call site instead (a plain
+                # cast instead of OSDynamicCast in
+                # InfernoVGPUUserClient::start()) rather than fixing this
+                # vtable slot globally -- revisit only with a real fix for
+                # the OSMetaClass field layout itself, not another
+                # single-slot patch.
                 86: "__ZN16InfernoVGPUHello5startEP9IOService",  # IOService::start real slot
                 # Found by decoding real __ZTV9IOService (0xfffffff0077001e0)
                 # for the qword matching real IOService::newUserClient's real

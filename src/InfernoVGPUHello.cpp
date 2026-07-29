@@ -231,7 +231,19 @@ bool InfernoVGPUUserClient::start(IOService *provider)
 	if (!superOk) {
 		return false;
 	}
-	fProvider = OSDynamicCast(InfernoVGPUHello, provider);
+	// Not OSDynamicCast(InfernoVGPUHello, provider): that walks
+	// provider->getMetaClass()'s superClassLink chain, which needs our
+	// hand-linked OSMetaClass instance's fields to be laid out exactly like
+	// the real kernel's OSMetaClass (confirmed broken -- see the
+	// applyToInstancesOfClassName crash notes in resolve.py/project memory).
+	// Patching getMetaClass()'s vtable slot to fix *this* one check made the
+	// system unstable (watchdog panics under normal idle load some time
+	// later, twice, only after that patch -- something else in the kernel's
+	// own housekeeping evidently also walks live services' metaclasses and
+	// doesn't tolerate whatever's still wrong deeper in ours). We are the
+	// only caller of newUserClient() on this exact class pair, so a plain
+	// cast is exactly as correct here without touching that vtable slot.
+	fProvider = static_cast<InfernoVGPUHello *>(provider);
 	*(volatile uint32_t *)USERSPACE_DYNCAST_MARKER_ADDR = (fProvider != NULL) ? 1u : 2u;
 	return fProvider != NULL;
 }
