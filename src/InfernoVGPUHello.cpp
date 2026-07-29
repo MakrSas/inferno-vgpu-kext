@@ -58,6 +58,13 @@ extern "C" uint64_t kvtophys(uintptr_t va);
 // branch; these pin down exactly which of the two ways start() can fail.
 #define USERSPACE_SUPERSTART_MARKER_ADDR 0xfffffff1020c4510ULL
 #define USERSPACE_DYNCAST_MARKER_ADDR 0xfffffff1020c4518ULL
+// IOServiceOpen() from real userspace was returning kIOReturnNotPermitted
+// (0xe00002e2) even after newUserClient() started returning success by every
+// marker so far -- this pins down whether our own function really reaches
+// its final `return kIOReturnSuccess`, or whether the compiler/some earlier
+// path silently diverges (e.g. attach()/start() succeeding doesn't strictly
+// prove control flow reaches line 319 unmodified).
+#define USERSPACE_NEWCLIENT_RESULT_MARKER_ADDR 0xfffffff1020c4520ULL
 
 // inferno-vgpu-v1's MMIO base, as mapped by t8030_create_inferno_vgpu_node()
 // in this exact QEMU build/machine config (kaslr-off=true, fixed device
@@ -316,5 +323,6 @@ IOReturn InfernoVGPUHello::newUserClient(task_t owningTask, void *securityID,
 	}
 
 	*handler = client;
+	*(volatile uint32_t *)USERSPACE_NEWCLIENT_RESULT_MARKER_ADDR = 0x600D;
 	return kIOReturnSuccess;
 }
