@@ -41,14 +41,18 @@ int main(void)
         NSString *name = device.name;
         CHECK(name != nil && name.length > 0, "device.name = %s", name.UTF8String ?: "(nil)");
 
-        NSString *vendor = device.vendorName;
+        // vendorName is MTLDeviceSPI-only, not in the public MTLDevice
+        // protocol the SDK headers declare -- message via `id` to skip
+        // static protocol checking (we know at runtime it responds, since
+        // we installed it ourselves via class_addMethod).
+        NSString *vendor = [(id)device vendorName];
         CHECK(vendor != nil, "device.vendorName = %s", vendor.UTF8String ?: "(nil)");
 
         unsigned long long regID = device.registryID;
         CHECK(regID != 0, "device.registryID = 0x%llx", regID);
 
         CHECK(device.hasUnifiedMemory == YES, "device.hasUnifiedMemory = %d", device.hasUnifiedMemory);
-        CHECK(device.maxBufferLength > 0, "device.maxBufferLength = %llu", device.maxBufferLength);
+        CHECK(device.maxBufferLength > 0, "device.maxBufferLength = %llu", (unsigned long long)device.maxBufferLength);
 
         id<MTLCommandQueue> queue = [device newCommandQueue];
         CHECK(queue != nil, "newCommandQueue -> %p", queue);
