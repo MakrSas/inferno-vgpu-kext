@@ -345,6 +345,16 @@ jobs:
             -o out8/test_agx_bridge src/userspace_test/test_agx_bridge.m
           file out8/test_agx_bridge
 
+      - name: "Compile agx_introspect.m (live ObjC runtime method-list dump of the constructed AGXPrincipalDevice)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation \
+            -o out8/agx_introspect src/userspace_test/agx_introspect.m
+          file out8/agx_introspect
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
