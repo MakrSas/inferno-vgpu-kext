@@ -19,6 +19,14 @@
 #import <dispatch/dispatch.h>
 
 @class InfernoComputeCommandEncoder;
+// Forward-declares just the one selector InfernoCommandBuffer's
+// -computeCommandEncoder needs before InfernoComputeCommandEncoder's real
+// @interface appears later in this file -- ARC needs a real declaration
+// (not just a `@class`) to know a selector's ownership/argument semantics,
+// even for a plain `id`-typed message send.
+@interface NSObject (InfernoComputeCommandEncoderForwardDecl)
+- (void)setCommandBuffer:(id)commandBuffer;
+@end
 
 // Mirrors InfernoVGPUUserClient's external-method index 0 (sGetVersion) --
 // the only opcode proven end-to-end this session (inferno_vgpu_test). Real
