@@ -357,6 +357,16 @@ jobs:
             -o out8/agx_introspect src/userspace_test/agx_introspect.m
           file out8/agx_introspect
 
+      - name: "Compile agx_functional_test.m (end-to-end: name/vendorName/registryID/newCommandQueue/commit/newBufferWithLength+contents round-trip)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal \
+            -o out8/agx_functional_test src/userspace_test/agx_functional_test.m
+          file out8/agx_functional_test
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
