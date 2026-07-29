@@ -295,7 +295,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compile the direct AGXPrincipalDevice initWithAcceleratorPort: probe
+      - name: "Compile the direct AGXPrincipalDevice initWithAcceleratorPort: probe"
         continue-on-error: true
         run: |
           set -x
