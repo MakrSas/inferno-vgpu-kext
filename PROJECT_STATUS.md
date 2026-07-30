@@ -370,6 +370,274 @@ suggests):
    *what* about this binary's compiled structure differs, before spending a
    GDB session on step 2.
 
+### UPDATE 2026-07-30 (later session): Mach-O diff done (Step 2, conclusive
+### no-differentiator), and the crash is now localized to dyld's own
+### userspace bootstrap code, not this binary's own code or link deps
+
+Picked up both remaining next steps from the previous update. Both binaries
+plus the known-passing comparison binary were already available locally
+(no CI wait needed) from the prior session's downloads: `agx_ci_dl/
+agx_system_metal_test` (68944B, dlsym variant), `agx_system_metal_test_direct`
+(68992B), `agx_metal_api_draw_test` (68816B), plus `agx_metal_api_compute_test`/
+`agx_functional_test`/`agx_introspect` as extra known-good baselines.
+
+**Step 2 (Mach-O structural diff): done, conclusive, no differentiator
+found.** Wrote a minimal hand-rolled `mach_header_64`/load-command walker
+(no `otool` on this Linux host -- same spirit as this project's existing
+`resolve.py`/`parse_obj.py`) and dumped every load command for all five
+binaries. Result: **completely structurally uniform** across crashing and
+passing binaries alike --
+- Identical `LC_LOAD_DYLIB` list, exact same 5 entries in the exact same
+  order and versions in both `agx_system_metal_test` and
+  `agx_metal_api_draw_test`: `Foundation` (cur=0x9c70100), `Metal`
+  (cur=0x1571300), `libobjc.A.dylib` (cur=0xe40000), `libSystem.B.dylib`
+  (cur=0x5417802), `CoreFoundation` (cur=0x9c70100). No `LC_LOAD_WEAK_DYLIB`,
+  no `LC_REEXPORT_DYLIB`, no `LC_RPATH`, no `LC_LINKER_OPTION` in either.
+- Identical segment layout shape: `__PAGEZERO`/`__TEXT`/`__DATA_CONST`/
+  `__DATA`/`__LINKEDIT`, same `vmaddr`/`maxprot`/`initprot` for every
+  segment, same section *names* in the same order (only sizes/offsets
+  differ, tracking the small code-size delta from the extra
+  `fcntl.h`/`unistd.h`/`MTrace()` helper -- already known to be
+  never-reached, dead-before-crash code).
+- Identical `LC_MAIN entryoff=0x4000` in both. Neither has
+  `LC_CODE_SIGNATURE` (already established). `ncmds=22 sizeofcmds=2096` in
+  both (`agx_metal_api_compute_test`/`agx_functional_test`/`agx_introspect`
+  have slightly smaller `ncmds`/`sizeofcmds` purely because they don't link
+  `CoreFoundation`, consistent with their simpler compute-only source).
+- Compile commands in `.github/workflows/build.yml` are **byte-identical
+  text** for all of them: `clang -target arm64e-apple-ios14.0 -isysroot
+  "$SDK" -fobjc-arc -framework Foundation -framework Metal [-framework
+  IOKit] -o ...`. No `-weak_framework` anywhere in the whole file.
+
+**This also directly kills the task's own "-weak_framework Metal" theory,
+without even needing to build the experimental variant it suggested**:
+`agx_metal_api_compute_test` -- one of the four binaries already proven to
+run to completion via plain `execve()` with fully correct results (see the
+gates-#2-#5 update above, `IOServiceOpen succeeded... result = 42`) --
+**also hard-links `-framework Metal`** in exactly the same way as the
+crashing binary. A hard hard-link to `Metal.framework` cannot be the
+differentiator when a binary with the identical hard link demonstrably
+works. No weak-framework experiment was run since the counter-example
+already disproves the premise.
+
+**New source-level finding that reframes Step 1 entirely.** Fetched
+`osfmk/kern/mach_loader.c` from `apple-oss-distributions/xnu` tag
+`xnu-7195.50.7.100.1` (this project's own already-established
+closest-available match for this exact kernel build -- same tag the SIGKILL
+investigation above used throughout) via `gh api search/code` +
+`raw.githubusercontent.com` fetches (this project's own local copy of this
+same file, saved to scratch by an earlier session, was reused first and
+cross-checked). `load_main()` -- the LC_MAIN load-command handler, which is
+what every binary in this project's test suite has (none use
+`LC_UNIXTHREAD`) -- contains this, verbatim:
+
+```c
+if (result->using_lcmain || result->entry_point != MACH_VM_MIN_ADDRESS) {
+        /* Already processed LC_MAIN or LC_UNIXTHREAD */
+        return LOAD_FAILURE;
+}
+
+/* kernel does *not* use entryoff from LC_MAIN.  Dyld uses it. */
+result->needs_dynlinker = TRUE;
+result->using_lcmain = TRUE;
+```
+
+**The kernel never computes or sets the initial user-thread PC to the main
+executable's own entry point at all**, for any LC_MAIN binary. It sets
+`needs_dynlinker=TRUE`, and elsewhere (`load_dylinker()`, called from
+`parse_machfile()`'s own recursive-invocation path for `LC_LOAD_DYLINKER`
+-- the same inlined recursion this project's SIGKILL investigation flagged
+as "made isolating the one check from its neighbors nontrivial by hand")
+the kernel loads `/usr/lib/dyld` itself as a second, nested Mach-O and it is
+**dyld's own entry point** that ends up as the thread's initial PC. Dyld
+itself, entirely in userspace, resolves the real app's mapped location and
+jumps to *its* LC_MAIN entry only as the very last step of its own
+bootstrap.
+
+This means the task's literally-proposed Step 1 ("breakpoint the app's own
+LC_MAIN entryoff VA") **cannot discriminate working vs. crashing binaries
+even in principle**: the kernel-committed initial PC is dyld's entry either
+way, identically, for every dynamically-linked binary in this whole
+project. A breakpoint there would fire the same for `agx_metal_api_draw_test`
+and `agx_system_metal_test` alike -- it only proves dyld gets control at
+all, which was never in question. Also confirmed from the same source read:
+`load_machfile()` computes the app's own slide (`aslr_page_offset`) and
+dyld's own, fully independent slide (`dyld_aslr_page_offset`) via
+**genuine, freshly-randomized `random()` calls on every single `execve()`**
+(`mach_loader.c` ~line 531) -- ruling out any fixed/precomputed breakpoint
+address for "the app's own mapped entry" a priori; it would need to be
+captured live, per-run, same as everything else in this investigation.
+
+**Live kernel-GDB fault capture (the real substitute for literal Step 1).**
+Since the kernel-committed PC can't discriminate, and dyld's own userspace
+code is exactly where the mach_loader.c finding points, the practical
+question became "where is the CPU when the fault actually happens" --
+answered directly by breakpointing the ARM64 EL0-abort path instead of
+guessing addresses. `osfmk/arm64/sleh.c` (same xnu tag, fetched the same
+way) shows `sleh_synchronous(arm_context_t *context, uint32_t esr,
+vm_offset_t far)` dispatches per `ESR_EC(esr)` class; breakpointing it
+directly is far too hot (fires on literally every syscall, `ESR_EC_SVC_64`
+included) to be practical with a hand-rolled RSP client. Its EL0-abort-only
+callee is a **much** better target: `_handle_user_abort`
+(`0xfffffff007b574f0` -- found via `kernel-symbols.txt`, confirmed unique),
+called only for genuine EL0 data/instruction aborts, signature `static void
+handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t
+fault_addr, fault_status_t fault_code, vm_prot_t fault_type, vm_offset_t
+recover, expected_fault_handler_t expected_fault_handler)` -- at entry,
+AAPCS64 puts `state`/`esr`/`fault_addr`/`fault_code`/`fault_type` directly
+in `x0`-`x4`, no memory read needed for those. The one thing worth reading
+out of memory is the *real* faulting PC, inside `*state`: `struct
+arm_saved_state { arm_state_hdr_t ash /* 8B: flavor,count */; union {
+ss_32; ss_64; } uss; }`, and for arm64 `struct arm_saved_state64 { uint64_t
+x[29]; fp; lr; sp; pc; uint32_t cpsr,reserved; uint64_t far; uint32_t
+esr,exception; }` (fetched from `osfmk/mach/arm/thread_status.h`, same
+tag) -- giving, relative to the `state` pointer in `x0`: `pc @ +0x108`,
+`cpsr @ +0x110`, `far @ +0x118`, `esr @ +0x120`. Every single hit across
+every run this session cross-checked `state->far == x2` (the fault_addr
+argument register) and `state->esr == x1` (the esr argument register)
+**exactly**, on every hit with no exceptions -- strong live confirmation
+the offset math and the live-register interpretation are both correct.
+
+Armed this breakpoint, triggered `/agx_system_metal_test` via a separate
+serial connection (same two-phase pattern as the SIGKILL investigation),
+and captured live fault data across three separate sessions/execs (two
+inadvertently required a full QEMU restart in between -- see the
+methodology-gotcha paragraph below). **Consistent finding across all
+three**: fault PCs immediately following the trigger cluster tightly in a
+`~0x184000000`-`~0x1eeffffff`-ish range that is (a) **not** the app
+binary's own private mapping (independently visible in the same sessions:
+an unrelated long-lived background process's lazy-binding activity
+consistently lands around `~0x100000000-0x102000000`, self-consistently
+tracked across many hits from a single stable `state` pointer), and (b)
+**different in each of the three separate runs** (`~0x18489508c` in run 1;
+a single hit at `~0x1a7dd9684` in run 2 before it was cut short; a whole
+cluster spanning `~0x1b12d1490`-`~0x1eea4827c` in run 3). This
+run-to-run variation is *itself* a positive confirmation of the
+`mach_loader.c` finding above: it is exactly what independently-re-randomized
+per-exec ASLR for dyld's own private mapping (`dyld_aslr_page_offset`,
+separate from the shared cache's own fixed system-wide base) predicts. The
+converging picture: **the fault happens inside dyld's own privately-mapped
+code, not inside `agx_system_metal_test`'s own compiled TEXT, and not (based
+on the address ranges) inside the fixed, system-wide dyld_shared_cache
+mapping either** -- consistent with, and reinforcing, "the crash is dyld's
+own bootstrap/loader machinery, before it ever hands control to this
+image's own code."
+
+**Honest caveat -- this is strong circumstantial evidence, not a single
+unambiguous smoking-gun hit.** A second breakpoint on `_exception_triage`
+(`0xfffffff007a2c850`, xnu's Mach-exception-escalation entry point --
+should fire only when a fault is genuinely unresolvable, not for the many
+benign/resolved lazy-binding page-ins that also route through
+`handle_user_abort`) was armed alongside `handle_user_abort` specifically
+to pinpoint the one truly-fatal hit per trigger. **It never fired, in any
+of the three runs**, despite `agx_system_metal_test` visibly crashing each
+time (independently reconfirmed via plain `execve()`,
+`Segmentation fault: 11`, matching every prior session). Given this
+project's own SIGKILL investigation already hit the exact same class of
+surprise once (`_cs_process_global_enforcement`'s trivial `return 1;` body
+got constant-folded into its ~4 call sites at compile time, "presumably
+built with LTO/whole-module optimization," making a breakpoint on the
+*symbol* never fire even though the logic still ran), the most likely
+explanation is that `exception_triage` is similarly inlined into its
+caller(s) in this specific compiled kernel, not that the crash bypasses
+Mach-exception delivery entirely. Not confirmed further this session --
+would need the same disassemble-the-caller-and-find-the-real-call-site
+technique used for the SIGKILL gates. Because of this, the ~86 `abort` hits
+captured per run span up to 27 distinct concurrent kernel-thread contexts
+(this guest boots several widget-host processes --
+`WeatherWidget`/`GeneralMapsWidget`/`com.apple.mobilenotes.WidgetExte` --
+confirmed via `dmesg`'s `memorystatus:` chatter, not a symptom of anything
+wrong), and no single hit could be individually, unambiguously proven to be
+*the* fatal one via a clean `exception_triage` correlation the way earlier
+SIGKILL gates were pinned down. The PC-range convergence across three
+independent runs is the strongest evidence in hand, not a single definitive
+capture.
+
+**Methodology gotcha hit twice this session, root-caused and fixed --
+worth recording precisely for whoever debugs multi-vCPU SMP targets here
+next.** QEMU's system-mode gdbstub for this 7-vCPU (`-smp 7`) target runs
+in all-stop mode: when *any* vCPU hits a breakpoint, the whole VM halts,
+but a `g` (read registers) call without explicit `Hg`/`Hc` thread-scoping
+can return **a different, unrelated vCPU's live PC** on any given stop --
+not necessarily the one that actually hit a known breakpoint. The first
+version of this session's capture script treated *every* stop uniformly
+(`z0,pc,4` / `s` / `Z0,pc,4` at whatever PC was read back), which is safe
+for a *recognized* breakpoint hit but actively harmful for an
+unrecognized one: `Z0` unconditionally **plants a brand-new real
+breakpoint** at that essentially-arbitrary observed PC. Across a busy
+multi-core idle system this snowballs fast (dozens of spurious breakpoints
+within seconds), and ultimately wedged the VM into the exact
+`paused (debug)`-that-`cont`-can't-clear state this doc's SIGKILL section
+already warned about -- **twice** this session, each requiring the
+documented kill+relaunch recovery (both were clean: no panics, `dmesg`
+otherwise normal, and critically **both the file-baked SIGKILL-gate patches
+and the disk-resident `block_invoke` DSC patch survived intact** --
+confirmed via `/sigkill_test` showing `Segmentation fault: 11`, not
+`Killed: 9`, immediately after each restart, no live-patch re-application
+needed). **The fix**: only ever touch (`z0`/`s`/`Z0`) breakpoint addresses
+you yourself explicitly set; for any stop at an unrecognized PC, just call
+`c` again and leave it alone entirely -- don't try to "clean up" or
+"step past" a PC you don't own, since on an SMP all-stop target that PC may
+not even belong to a real breakpoint at all. Also worth pre-clearing
+proactively in any future session on this VM: `_arm64_retention_wfi`
+(`0xfffffff008125a10`), the CPU idle-loop entry, which had a stale
+breakpoint armed from some earlier, unrelated session and is hot enough
+(every idle core re-enters it constantly) to single-handedly starve a naive
+capture loop of its entire time budget if not cleared first.
+
+**No fix produced this session.** Unlike the dlsym-vs-direct-call
+experiment (a fast, cheap, fully-testable hypothesis) or a hypothetical
+`-weak_framework` swap (already disproven above without needing to build
+it), "dyld's own bootstrap logic faults while loading this specific image"
+doesn't have an equally cheap userspace-only knob to flip -- a real fix
+would need either finding and patching the exact faulting dyld instruction
+(would need dyld symbols for whichever private slide it lands at each run
+-- `ipsw` still not installed on this Linux host, and this project's local
+`dyld_shared_cache_arm64e.a2s` is `ipsw`'s own undocumented binary
+address-to-symbol cache format, not a plain symbol table, so not usable
+without writing a real parser for that format specifically), or a
+structural change to how this binary is linked/loaded that avoids whatever
+dyld is choking on (not yet identified, since Step 2 found no structural
+Mach-O differentiator at all).
+
+**Concrete next steps for whoever picks this up:**
+1. Redo the `handle_user_abort` capture with proper GDB thread-scoping
+   (parse the `T05thread:NN;` field out of every stop reply, send an
+   explicit `Hg<NN>`/`Hc<NN>` before `g`/`s`) so every read is guaranteed to
+   belong to the vCPU that actually hit the breakpoint -- would make the
+   per-run PC data fully trustworthy per-hit instead of only
+   trustworthy-in-aggregate/by-convergence, and would let the "don't touch
+   unrecognized PCs" safety fix above be relaxed back to something closer
+   to the original per-hit remove/step/reinsert dance without the
+   SMP-misattribution risk that caused the two stuck-VM restarts.
+2. Find `exception_triage`'s real call site(s) in the compiled kernel (it's
+   likely inlined into one or more of its callers, same class of surprise
+   as `_cs_process_global_enforcement` in the SIGKILL investigation) --
+   disassemble `handle_user_abort`'s own compiled tail (already
+   breakpointable, hits confirmed) looking for whatever it actually branches
+   to on the "fault could not be resolved" path, then breakpoint *that*
+   directly instead of the (possibly-inlined-away) standalone symbol. This
+   would finally let a single hit be proven unambiguously fatal, tightening
+   "strong circumstantial convergence" into a definitive single capture.
+3. Once a specific dyld-side faulting PC is captured with full confidence,
+   read its own private mapping's file (would need to identify which file
+   backs that region -- almost certainly `/usr/lib/dyld` given the
+   `mach_loader.c` finding, or dyld-in-cache if this build embeds it) at
+   `pc - runtime_slide` to see what instruction/data reference is actually
+   faulting, which would finally explain *why* (e.g. a bad export-trie
+   lookup, a missing shared-cache mapping, a bug specific to this
+   project's custom kernel/DSC patches interacting badly with one specific
+   binary's dependency-resolution order).
+
+Environment left clean: `dmesg` scanned after the final restart (only
+ordinary `memorystatus:`/`Sandbox: nehelper deny`/HID-reporter chatter, zero
+panics/asserts), QMP `info status` confirmed `running` (not paused),
+`/sigkill_test` confirmed still `Segmentation fault: 11` (patches intact),
+`/compute_test` re-run as the standard sanity check (`IOServiceOpen
+succeeded, connection=0x140b` / `result = 42 (expect 42)`, exit 0). GDB
+breakpoints were fully removed at the end of the final successful capture
+run before the `finally`-block QMP `cont`.
+
 ## CRITICAL: the SIGKILL mystery and its workaround
 
 **Every freshly-transferred, unsigned MAIN EXECUTABLE binary on the guest
