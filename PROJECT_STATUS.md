@@ -149,6 +149,73 @@ enable -f /path/to/whatever.dylib my_thing
 my_thing            # runs it, exactly like any other bash builtin
 ```
 
+**Update, same day**: tried this against `bash_present_builtin.m` (real
+`INFERNO_VGPU_OP_PRESENT` call) — loading via `enable -f` from `/` (NOT
+`/tmp` — see next paragraph) DOES succeed and DOES survive (`ENABLE_RC=0`,
+no kill), confirming the workaround itself is sound. But
+`inferno_present_builtin`'s own `IOServiceOpen()` call then failed with
+`0xe00002e2` (`kIOReturnNotPermitted`). This is a **third, independent**
+security layer, distinct from both AMFI/codesigning (already confirmed
+passing) and from the process-exec SIGKILL mystery:
+
+1. First hurdle: `enable -f /tmp/whatever.dylib name` fails with `file
+   system sandbox blocked mmap() of '/private/var/tmp/whatever.dylib'` —
+   **`/tmp` (== `/private/var/tmp`) is sandbox-blocked for executable
+   mmap**, but `/` (root) is not. Fix: `cp` the dylib from `/tmp` to `/`
+   guest-side (cheap, no re-transfer needed) before `enable -f`.
+2. Second hurdle, still unresolved: even loaded from `/`, the actual
+   `IOServiceOpen()` call inside the builtin gets denied. `dmesg` shows
+   exactly why: `System Policy: bash(31) deny(1) iokit-open IOUserClient` /
+   `This must be in your com.apple.security.iokit-user-client-class
+   entitlement.` — **`/bin/bash` is a real, signed platform binary with an
+   actual enforced sandbox profile** (unlike raw unsigned standalone test
+   binaries, which apparently run with no sandbox profile attached at all
+   — that asymmetry is *why* this only shows up now, via the bash-builtin
+   path, and never did for the standalone-executable tests that got as far
+   as `IOServiceOpen` in much earlier sessions).
+   - Found the responsible kernel function via `kernel-symbols.txt`:
+     `_hook_iokit_check_open` (a Sandbox.kext MACF policy hook,
+     `PACIBSP`-prologued real function). Live-patched it in the running
+     kernel via GDB (`mov x0, #0; ret` at its entry — same
+     always-allow-in-place technique the project's own
+     `kernel_patches.c` already uses for AMFI/SEP bypasses) — **this
+     requires the user to have Bypass Permissions enabled**, the normal
+     auto-mode classifier blocks raw kernel memory patches like this by
+     design; ask first if it's not already on.
+   - **Patch did NOT fix it.** Confirmed via a live breakpoint that
+     `_hook_iokit_check_open` genuinely IS being called (hit fired, PC
+     matched exactly) and does return cleanly — yet the exact same deny +
+     entitlement message still appeared afterward. So either this isn't
+     the actual enforcement point for the entitlement-specific message (a
+     different function may own the `com.apple.security.iokit-user-client-
+     class` string check specifically — possibly plain IOKit C++ code,
+     e.g. `IOUserClient::copyClientEntitlement`/`clientHasPrivilege`, not
+     a MAC policy hook at all), or there's a second, independent gate.
+     **Not yet found — next session should search for the literal string
+     `"com.apple.security.iokit-user-client-class"` in the kernelcache
+     (or the log format string around it) to locate the real check.**
+   - Operational note: this GDB round left QEMU in a genuinely stuck
+     `paused (debug)` loop (breakpoint-removal `z0` returned `E22`
+     repeatedly, `cont` immediately re-triggered `STOP`) that a plain QMP
+     `cont` could NOT clear. **Only a full QEMU kill+relaunch recovered
+     it** — if a future GDB session gets stuck the same way, don't spend
+     time trying to un-wedge it via more RSP commands, just restart QEMU
+     (cheap, kernelcache file is unaffected, only in-memory patches/state
+     are lost).
+   - A live in-memory GDB patch like this one **does not survive a QEMU
+     restart** — it was lost by the forced restart above and was not yet
+     re-applied or made permanent (e.g. baked into the kernelcache file
+     the same way `patch_block_invoke.py`/`patch_kernelcache.py` do, or
+     added properly to `kernel_patches.c` for a QEMU rebuild) as of this
+     writing.
+
+Bottom line: **the bash-loadable-builtin technique itself works and is the
+right approach** — what remains is finding the actual `com.apple.security.
+iokit-user-client-class` entitlement check and neutralizing that too
+(or granting our `InfernoVGPUUserClient` class some other form of
+exemption, e.g. an IOKit-side property, which might be more surgical than
+another kernel patch — not yet investigated).
+
 ## Environment reference
 
 - Working dir: `/home/makr/Documents/Inferno/InfernoData` (QEMU launch
