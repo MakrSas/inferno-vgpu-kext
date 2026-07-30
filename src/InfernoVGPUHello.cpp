@@ -247,15 +247,32 @@ void InfernoVGPUHello::presentRetryThreadMain(void *parameter, int wait_result)
 	// -- comfortably past observed emulated-boot time to a usable display,
 	// still bounded so the thread can't spin forever if the genpipe truly
 	// never comes up this boot.
+	bool live = false;
 	for (int attempt = 0; attempt < 100; attempt++) {
 		IOSleep(3000);
 		uint32_t status = self->submitBootPresentDispatch();
 		if (status == 0) {
-			break; // success
+			live = true;
+			break;
 		}
 		// else: keep retrying (e.g. status 2 == no active display genpipe
 		// yet, expected for a good chunk of boot) until the attempt budget
 		// above runs out.
+	}
+	// Confirmed live: a single successful present gets stomped by the very
+	// next frame the real display driver draws (boot logo animation,
+	// springboard, etc.) -- adp_v4_present_frame() blits straight into the
+	// same live genpipe buffer the real driver keeps redrawing, so a
+	// one-shot write is visible for at most one frame and isn't reliably
+	// catchable in an externally-timed screendump. Once the genpipe is
+	// confirmed live, keep re-presenting indefinitely so the frame stays
+	// fresh; this is a standing proof-of-concept overlay, not meant to ever
+	// stop on its own.
+	if (live) {
+		for (;;) {
+			IOSleep(1000);
+			self->submitBootPresentDispatch();
+		}
 	}
 	thread_terminate(current_thread());
 }
