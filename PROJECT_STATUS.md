@@ -1,6 +1,6 @@
 # Inferno GPU/Metal project — status and playbook
 
-Status and technical writeup, last updated 2026-07-30. Covers what's done,
+Status and technical writeup, last updated 2026-07-31. Covers what's done,
 what's proven, what's broken, and the exact commands to reproduce or
 continue the work.
 
@@ -123,11 +123,204 @@ not just an isolated test-harness readback.
   "hand-patch Metal.framework + custom kext" shortcut instead of implementing
   a real protocol. Getting the actual interface to render through Metal
   would need either (a) confirming `backboardd`/`WindowServer` even attempts
-  to use Metal in this build (unlikely — it probably already fell back to
-  software compositing given AGX has never worked), or (b) building out our
-  `AGXPrincipalDevice` fallback layer's `MTLDeviceSPI` conformance far
-  enough (~523 private methods beyond the 112 public `MTLDevice` ones) that
-  it could actually be trusted for real compositing. Not attempted yet.
+  to use Metal in this build — **now answered, see "`backboardd`/compositor
+  Metal-reach investigation (2026-07-31)" below: it does not, in this
+  build** — or (b) building out our `AGXPrincipalDevice` fallback layer's
+  `MTLDeviceSPI` conformance far enough (~523 private methods beyond the 112
+  public `MTLDevice` ones) that it could actually be trusted for real
+  compositing. Not attempted yet.
+
+## `backboardd`/compositor Metal-reach investigation (2026-07-31)
+
+Direct follow-up to the "Not started" bullet above ("confirming
+`backboardd`/`WindowServer` even attempts to use Metal in this build").
+**Answer: no — `backboardd`, the real iOS compositor daemon, never calls
+`MTLCreateSystemDefaultDevice()` in this build.** Three independent lines
+of evidence converge on this, detailed below. This was purely an
+investigate-and-report task, per the task's own scope — no code changes.
+
+**Step 0: process names, verified first.** `ps auxww` on the live guest
+(QEMU had been up since the prior session, no restart needed — confirmed
+`/sigkill_test` still gave `Segmentation fault: 11`, not `Killed: 9`,
+before touching anything) shows **there is no `WindowServer` process on
+this iOS build at all** — `WindowServer` is a macOS-only concept. The two
+real candidates are:
+- **`backboardd`** (`/usr/libexec/backboardd`, pid 60 in this boot) — the
+  actual compositor/render-server daemon on iOS; it's what macOS's
+  `WindowServer` corresponds to here.
+- **`SpringBoard`** (`/System/Library/CoreServices/SpringBoard.app/SpringBoard`,
+  pid 57) — the home-screen/app-launcher UI process, a *client* of
+  backboardd's render server, not the compositor itself.
+
+**Step 1: passive `dmesg` scan — negative, with a working positive
+control.** Scanned the full captured kernel-log window (guest uptime
+~108s through current, i.e. from shortly after boot through the time of
+this investigation) for `metal`/`agx`/`MTLCreate` (any case): **zero
+matches for any process.** Critically, this same log window *does* contain
+the already-documented `com.apple.MapKit` hit (`Sandbox: com.apple.MapKit
+(363) deny(1) file-read-metadata /b` etc., at guest-uptime ~1031s) — i.e.
+the exact sandbox-deny-on-`/b` signature our block_invoke patch's
+`dlopen("/b")` produces for a real process that *does* reach it. This is a
+genuine positive control: the capture methodology is proven to surface
+this signature when it happens, and it never happens for `backboardd`
+(pid 60) or `SpringBoard` (pid 57) anywhere in the window.
+
+**Step 2: static Mach-O analysis of `backboardd` itself — negative, and
+explains *why*.** No `otool`/`nm`/`strings`/`ipsw` available (guest has
+none of them; this Linux host still doesn't have `ipsw` either — same gap
+noted in the crash-investigation section above). Worked around it the same
+way this project always has for binary-structure questions: dumped the
+Mach-O header + load commands via the guest shell's own `dd`/`od` (both
+present) over the serial console, and parsed the hex dump with a small
+throwaway Python load-command walker (same spirit as `resolve.py`/
+`parse_obj.py`'s existing segment-walk code, not committed — one-off).
+
+- `/usr/libexec/backboardd` is a **real, full, standalone Mach-O**, not a
+  dyld_shared_cache stub (`__TEXT` vmsize `0xc8000` ≈ 800KB, 62 load
+  commands, file size 1,121,392 bytes) — unlike `SpringBoard` (the on-disk
+  file is a thin 16KB-`__TEXT` launcher stub, `LC_LOAD_DYLIB
+  SpringBoard.framework/SpringBoard`, whose real code lives entirely
+  in the dyld_shared_cache and has no standalone on-disk file at all —
+  not statically inspectable this session without a DSC symbol/export-trie
+  extractor, i.e. the same `ipsw`-shaped gap as elsewhere in this doc).
+- `backboardd` **hard-links** (`LC_LOAD_DYLIB`, not weak, not
+  `LC_REEXPORT_DYLIB`) `/System/Library/Frameworks/Metal.framework/Metal`
+  — alongside `QuartzCore.framework`, `IOMobileFramebuffer.framework`,
+  `IOSurface.framework`, and `GraphicsServices.framework`, a dylib set
+  entirely consistent with `backboardd` being the real compositor (it's
+  also where the extensive private `CARenderServer`/`CAContext*` C-symbol
+  surface lives, e.g. `CARenderServerRenderDisplay`, confirming it hosts
+  the actual, private render-server API — the direct macOS-`WindowServer`
+  equivalent).
+- Grepped `backboardd`'s raw bytes (`grep -a`, confirmed working via
+  positive controls: found real, expected symbol counts for
+  `objc_msgSend`, `dispatch_once`, `IOSurfaceCreate`, etc.) for every
+  Metal-related symbol name that would have to appear literally in
+  `__LINKEDIT`'s string table if referenced: **`MTLCreateSystemDefaultDevice`,
+  `MTLDevice`, `CAMetalLayer`, `MTLCommandQueue`, `MTLTexture` — zero
+  matches, all of them.** The **only** two Metal-prefixed symbols present
+  anywhere in the whole binary are `MTLSetShaderCachePath` and
+  `MTLMakeShaderCacheWritableByAllUsers` — housekeeping calls that
+  configure where/how the on-disk Metal shader-compiler cache lives, not
+  device-creation or rendering calls. This is presumably why
+  `backboardd` links `Metal.framework` at all: system-level shader-cache
+  directory administration, unrelated to whether it renders anything
+  through Metal itself.
+- By contrast, `backboardd` has **extensive, real usage** of
+  `IOSurfaceCreate/Lock/Unlock/GetBaseAddress/GetBytesPerRow/GetWidth/
+  GetHeight/...` (13 distinct symbols) and
+  `IOMobileFramebufferOpen/SetDebugFlags` — i.e. its actual compositing
+  path pushes raw pixel buffers through `IOSurface` straight into
+  `IOMobileFramebuffer`, the classic CPU/software-composited-then-blit
+  pattern, not a `CAMetalLayer`/`MTLDevice`-backed GPU path. This
+  directly confirms the project's long-standing suspicion ("it probably
+  already fell back to software compositing") with real evidence instead
+  of just plausibility.
+- Caveat: this only proves `backboardd`'s **own** compiled TEXT never
+  references the symbol. It says nothing about whether `QuartzCore.framework`'s
+  own private rendering backend (invoked *from* `backboardd`'s
+  `CARenderServer` machinery, but living in the dyld_shared_cache, not
+  `backboardd`'s own binary) might call it internally as an
+  implementation detail — that's exactly what step 3 was for.
+
+**Step 3: live kernel-GDB breakpoint sweep — negative, over a 515-second
+steady-state window.** Armed the debug port (already listening on 1234
+from an earlier session — no VM restart needed), connected with
+`guest_tools/gdb_rsp2.py`'s `RSP` class, and set breakpoints at all six
+addresses from the existing crash-investigation sweep above: the real
+outer entry `_MTLCreateSystemDefaultDevice` (`0x1970505d0`), the
+`dispatch_once` block's entry `___MTLCreateSystemDefaultDevice_block_invoke`
+(`0x1970506e4`), our own patch body (`0x1970506fc`), the two stub call
+targets our patch invokes (`dlopen` `0x1970a5cc0`, `dlsym` `0x1970a5cd0`),
+and the block's shared epilogue (`0x197050750`). Proactively tried
+clearing the known-hot stale `_arm64_retention_wfi` breakpoint first
+(per this doc's own methodology note) — got `E22` (not currently set,
+harmless). Watched 40 rounds of `continue` (515.2s real elapsed), only
+ever inspecting PCs that matched one of the six armed addresses (per the
+doc's own documented SMP-safety fix: never touch/step an unrecognized
+stop). **Zero hits on any of the six addresses.** All six breakpoints
+cleanly removed afterward (`z0` on each, all `OK`), `qmp_cont()` issued
+and confirmed. Post-run sanity: QMP `info status` → `running` (not
+paused), `/sigkill_test` → `Segmentation fault: 11` (gate patches still
+intact), `/compute_test` → `result = 42 (expect 42)` (guest undisturbed),
+`dmesg` scanned for panics/asserts (none, only ordinary
+`memorystatus:`/`tx_flush:` chatter).
+
+**Honest residual gap.** This window was run at guest uptime ~21-40
+minutes, well after `backboardd`/`SpringBoard` (pid 60/57) had already
+completed their own process launch (~T+0-2min, per their `ps` start
+times). `___MTLCreateSystemDefaultDevice_block_invoke` sits behind a
+`dispatch_once`, which is once-per-*process* (the predicate token lives
+in a per-process COW `__DATA` page, not shared globally), so this
+steady-state window **cannot** rule out a call that already happened
+earlier in `backboardd`'s own lifetime — only a breakpoint armed *before*
+a fresh boot, watching the actual boot sequence, closes that gap fully.
+Not attempted this session: it requires a full QEMU kill+relaunch with
+the breakpoint pre-armed before the guest even starts booting, which is
+meaningfully higher cost/risk (boot-timing coordination, the documented
+"QEMU dies silently during a long unattended wait" gotcha, the SMP
+misattribution gotcha) for a check that steps 1 and 2 already answered
+with high confidence by an entirely different, cheaper method (static
+absence of the symbol from `backboardd`'s own compiled code is a much
+stronger signal than a timing-dependent runtime observation would have
+been anyway). Flagged here explicitly rather than silently assumed away,
+per this task's own instructions.
+
+**Bottom line.** Static evidence (no symbol reference anywhere in
+`backboardd`'s own Mach-O), passive evidence (no sandbox-deny-on-`/b`
+signature in the boot log, with a working positive control proving the
+method would have caught it), and live evidence (zero breakpoint hits
+over an 8.5-minute steady-state window) all agree: **`backboardd` does
+not attempt to use the public Metal device-creation API in this build.**
+It already has, and uses, a complete non-Metal compositing path
+(`IOSurface` + `IOMobileFramebuffer`) — this isn't a partial/lazy Metal
+adoption that just hasn't fired yet, it's a structurally different
+rendering pipeline. The sandbox-allow-`/b`-for-backboardd idea (the
+natural next step *if* it had reached the patch) doesn't apply — there is
+no `dlopen("/b")` attempt to unblock, because there is no
+`MTLCreateSystemDefaultDevice()` call to redirect in the first place.
+
+**Concrete next steps for whoever picks this up:**
+1. **Close the residual dispatch_once gap** (optional, lower priority
+   given how convergent the evidence already is): arm the same six
+   breakpoints, then do a full QEMU kill+relaunch (patches are baked into
+   the kernelcache file now, so this is safe/cheap) and watch boot from
+   the very start, to rule out a call in the first ~2 minutes of
+   `backboardd`'s life with the same rigor as the rest of this
+   investigation.
+2. **Chase the QuartzCore-internal angle**: `backboardd` hosts
+   `CARenderServer`, and `QuartzCore.framework`'s own private rendering
+   backend (which actually decides Metal-vs-software per render context)
+   lives in the dyld_shared_cache, not in `backboardd`'s own TEXT — this
+   session's static check can't see inside it. Determining whether
+   `CARenderServer`'s backend-selection logic has some *other*, private
+   entry point into Metal (distinct from the public
+   `MTLCreateSystemDefaultDevice()` symbol this whole project's patch
+   targets) would need real DSC introspection tooling (`ipsw`, still not
+   installed on this Linux host) or a hand-rolled DSC symbol/export-trie
+   parser (this project has adjacent pieces already: `resolve.py`/
+   `off2va.py`). This is genuinely the same class of gap as the existing
+   `MTLDeviceSPI` private-surface note in the "Not started" section above,
+   just for QuartzCore's internal backend rather than application code.
+3. **A structurally different idea this session's findings directly
+   suggest**: rather than trying to get `backboardd` to call into a Metal
+   path it structurally doesn't use, meet it where it already is — it's
+   already doing real `IOSurfaceCreate`/`IOMobileFramebufferOpen`-based
+   compositing today. Intercepting/augmenting at that layer (e.g. wrapping
+   or replacing what backs an `IOSurface` backboardd already creates, or
+   hooking `IOMobileFramebuffer`'s presentation call) is a materially
+   different integration point than "make Metal work end to end" — worth
+   a real design pass of its own before committing to it, since it sidesteps
+   the entire "does the real compositor even try Metal" question this
+   session was scoped to answer, rather than resolving it. Not scoped or
+   attempted this session, flagged only as an option raised directly by
+   the evidence gathered.
+
+Environment left clean: QMP `info status` confirmed `running`, all six
+GDB breakpoints removed, `/sigkill_test`/`/compute_test` sanity-checked
+(both as documented above), `dmesg` scanned for panics/asserts (none).
+No kernel-side or userspace-side files were changed this session — purely
+investigative, per the task's own scope.
 
 ## `agx_system_metal_test` crash investigation (2026-07-30)
 
