@@ -65,6 +65,12 @@ extern "C" uint64_t kvtophys(uintptr_t va);
 // path silently diverges (e.g. attach()/start() succeeding doesn't strictly
 // prove control flow reaches line 319 unmodified).
 #define USERSPACE_NEWCLIENT_RESULT_MARKER_ADDR 0xfffffff1020c4520ULL
+// submitBootPresentDispatch() diagnostics: [0]=computed payload `total`
+// size, [1]=1 once reached (before the size-guard), [2]=submitPacket()'s
+// return status (0=ok) once it actually calls out.
+#define BOOT_PRESENT_TOTAL_MARKER_ADDR 0xfffffff1020c4528ULL
+#define BOOT_PRESENT_REACHED_MARKER_ADDR 0xfffffff1020c4530ULL
+#define BOOT_PRESENT_STATUS_MARKER_ADDR 0xfffffff1020c4538ULL
 
 // inferno-vgpu-v1's MMIO base, as mapped by t8030_create_inferno_vgpu_node()
 // in this exact QEMU build/machine config (kaslr-off=true, fixed device
@@ -260,8 +266,11 @@ void InfernoVGPUHello::submitBootPresentDispatch(void)
 
 	const uint32_t total = 4 + vertLen + vertPad + 4 + fragLen + fragPad +
 	                       4 + vbufLen + vbufPad + 4 + 4 + 4 + 4 + 4;
-	// Well under a typical kernel stack frame's headroom (~total 900 bytes).
-	uint8_t payload[1024];
+	*(volatile uint32_t *)BOOT_PRESENT_TOTAL_MARKER_ADDR = total;
+	*(volatile uint32_t *)BOOT_PRESENT_REACHED_MARKER_ADDR = 1;
+	// The two AIR shader texts alone run ~1.1KB combined -- still well
+	// under a typical kernel stack frame's headroom.
+	uint8_t payload[2048];
 	if (total > sizeof(payload)) {
 		return;
 	}
@@ -282,7 +291,8 @@ void InfernoVGPUHello::submitBootPresentDispatch(void)
 	*(uint32_t *)(payload + off) = destX; off += 4;
 	*(uint32_t *)(payload + off) = destY; off += 4;
 
-	submitPresentDispatch(payload, total);
+	uint32_t status = submitPresentDispatch(payload, total);
+	*(volatile uint32_t *)BOOT_PRESENT_STATUS_MARKER_ADDR = 0x600D0000 | (status & 0xff);
 }
 
 uint32_t InfernoVGPUHello::readVersionRegister(void)
