@@ -1,47 +1,42 @@
+// DIRECT-SYMBOL-CALL VARIANT (regression check) -- see agx_system_metal_test.m
+// for the current, passing dlsym(RTLD_DEFAULT, ...) variant and the full
+// history in PROJECT_STATUS.md's "agx_system_metal_test crash investigation"
+// section. This file is preserved UNCHANGED from before that investigation:
+// it calls the plain, standard, public MTLCreateSystemDefaultDevice() C
+// symbol directly, at compile/link time (plain #include <Metal/Metal.h> +
+// direct call) -- exactly what a real unmodified app/framework does, and
+// exactly the calling pattern that was found (2026-07-30) to crash with
+// SIGSEGV before main() ever starts executing, on this project's dyld/guest
+// environment specifically. Leading hypothesis: dyld eager-binding of this
+// one specific external C symbol at process-launch time; see
+// PROJECT_STATUS.md for the full diagnostic trail (live kernel-GDB
+// breakpoint sweep of the entire MTLCreateSystemDefaultDevice call chain,
+// none of which ever fire; /tmp/m_trace.log, written as literally the first
+// statement in main(), never gets created).
+//
+// Kept building in CI as a regression check: once/if the real dyld root
+// cause is understood and fixed, this file should start passing too without
+// any source change, which would be the clearest possible confirmation.
+//
+// Original description (still applies once/if this variant is unblocked):
 // The actual "does this work system-wide" proof: unlike every other test in
-// this directory, this one does NOT dlopen("/b")/dlsym("Q")/call it directly
-// -- it goes through the real, standard, public MTLCreateSystemDefaultDevice()
-// entry point (relying entirely on the already-deployed
-// ___MTLCreateSystemDefaultDevice_block_invoke patch, patch_block_invoke.py,
-// to route that call to our bridge), same as any unmodified real app/
-// framework on the system. If this test passes, every real Metal-using
-// process on the system (not just our own custom test harnesses) gets a
-// real, working device with the full compute+render fallback surface --
-// because the patch calls the exact same Q() (inferno_agx_bridge.m) our
-// other tests call explicitly, so redeploying /b's dylib updates
-// system-wide behavior without re-patching machine code.
+// this directory, this one does NOT dlopen("/b")/dlsym("Q")/call it directly.
+// It calls the plain, standard, public MTLCreateSystemDefaultDevice() --
+// exactly what any unmodified real app/framework on the system calls -- and
+// relies entirely on the already-deployed ___MTLCreateSystemDefaultDevice_
+// block_invoke patch (patch_block_invoke.py) to route that call to our
+// bridge. If this test passes, every real Metal-using process on the system
+// (not just our own custom test harnesses) gets a real, working device with
+// the full compute+render fallback surface -- because the patch calls the
+// exact same Q() (inferno_agx_bridge.m) our other tests call explicitly, so
+// redeploying /b's dylib updates system-wide behavior without re-patching
+// machine code.
 //
-// DLSYM VARIANT (2026-07-30): the original version of this file called the
-// real exported C symbol `_MTLCreateSystemDefaultDevice` directly, at
-// compile/link time (plain #include <Metal/Metal.h> + direct call). That
-// version was found to crash with SIGSEGV before main() ever starts
-// executing at all (confirmed via a live kernel-GDB breakpoint sweep of the
-// entire MTLCreateSystemDefaultDevice call chain -- none of it ever fires --
-// plus /tmp/m_trace.log, written as literally the first statement in
-// main(), never gets created). Leading hypothesis, per
-// PROJECT_STATUS.md's "agx_system_metal_test crash investigation" section:
-// this was the first binary in this project's history to require dyld to
-// bind that one specific Metal.framework C symbol at process-launch
-// (eager-binding) time, unlike every other test here which only ever
-// touches Metal.framework's Objective-C classes (resolved via the ObjC
-// runtime's own class-list mechanism, not symbol/PLT-style binding). This
-// file now instead resolves the same function via
-// dlsym(RTLD_DEFAULT, "MTLCreateSystemDefaultDevice") and calls through the
-// resulting pointer -- avoiding any link-time/eager-binding reference to the
-// C symbol while still exercising the real, patched, system-wide entry
-// point (RTLD_DEFAULT searches the process's already-loaded images, so this
-// is genuinely still Metal.framework's own MTLCreateSystemDefaultDevice,
-// not a private/renamed one). The unmodified, original direct-call version
-// is preserved as agx_system_metal_test_direct.m, kept building in CI as a
-// regression check for once/if the real dyld root cause is understood.
-//
-// Rest of the test is identical either way: exercises the full render
-// pipeline (same shape as agx_metal_api_draw_test) to prove it's not just
-// device discovery that works system-wide, but the entire object graph
-// through to a real rasterized GPU result.
+// Exercises the full render pipeline (same shape as agx_metal_api_draw_test)
+// to prove it's not just device discovery that works system-wide, but the
+// entire object graph through to a real rasterized GPU result.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
@@ -51,7 +46,7 @@
 // file so it's obvious which side -- caller vs Q() itself -- got how far).
 static void MTrace(const char *msg)
 {
-    int fd = open("/tmp/m_trace.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+    int fd = open("/tmp/m_trace_direct.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (fd < 0) {
         return;
     }
@@ -106,29 +101,14 @@ static const char kFragAir[] =
     else { printf("FAIL " fmt "\n", ##__VA_ARGS__); ok = 0; } \
 } while (0)
 
-typedef id<MTLDevice> (*MTLCreateSystemDefaultDeviceFn)(void);
-
 int main(void)
 {
     int ok = 1;
     @autoreleasepool {
-        // No Q(), no dlopen("/b") -- still the real, standard, public
-        // MTLCreateSystemDefaultDevice() any app on the system would reach.
-        // The only difference from a truly unmodified caller: resolved via
-        // dlsym(RTLD_DEFAULT, ...) instead of a direct link-time symbol
-        // reference, to sidestep the eager-binding crash documented above.
-        MTrace("main: dlsym(RTLD_DEFAULT, \"MTLCreateSystemDefaultDevice\")");
-        MTLCreateSystemDefaultDeviceFn fn =
-            (MTLCreateSystemDefaultDeviceFn)dlsym(RTLD_DEFAULT, "MTLCreateSystemDefaultDevice");
-        MTrace("main: dlsym() returned");
-        CHECK(fn != NULL, "dlsym(RTLD_DEFAULT, \"MTLCreateSystemDefaultDevice\") -> %p", (void *)fn);
-        if (fn == NULL) {
-            printf("\nSOME CHECKS FAILED\n");
-            return 1;
-        }
-
-        MTrace("main: calling MTLCreateSystemDefaultDevice() via dlsym'd pointer");
-        id<MTLDevice> device = fn();
+        // The whole point: no dlopen, no dlsym, no Q(). Just the standard,
+        // public entry point any app on the system uses.
+        MTrace("main: calling MTLCreateSystemDefaultDevice()");
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         MTrace("main: MTLCreateSystemDefaultDevice() returned");
         CHECK(device != nil, "MTLCreateSystemDefaultDevice() -> %p", (__bridge void *)device);
         if (device == nil) {
