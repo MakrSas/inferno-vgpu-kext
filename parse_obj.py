@@ -67,29 +67,40 @@ def main():
         })
 
     relocs = {"text": [], "const": [], "init": [], "term": []}
-    sec_by_name = {s["sectname"]: s for s in sections}
+    # NOTE: a section name (e.g. "__const") can appear MORE THAN ONCE in a
+    # single object -- confirmed empirically once enough __const-worthy
+    # static data got added that the assembler split it around an
+    # interleaved __cstring run. A naive name-keyed dict silently drops all
+    # but the last same-named section, which drops that section's
+    # relocations entirely (manifests as a suspiciously-low/zero reloc
+    # count with no error). Iterate every section matching each target
+    # name, and normalize "address" to be GLOBAL (section["addr"] +
+    # section-relative r_address) right here, once, so nothing downstream
+    # needs to know which of possibly-several same-named sections a given
+    # relocation came from -- it can just be located via its (unambiguous)
+    # global address against obj_sections.json's own "addr" ranges.
     for secname, key in (("__text", "text"), ("__const", "const"),
                           ("__mod_init_func", "init"), ("__mod_term_func", "term")):
-        sec = sec_by_name.get(secname)
-        if not sec or sec["nreloc"] == 0:
-            continue
-        for i in range(sec["nreloc"]):
-            ro = sec["reloff"] + i * 8
-            r_address, packed = struct.unpack_from("<Ii", data, ro)
-            upacked = packed & 0xFFFFFFFF
-            r_symbolnum = upacked & 0xFFFFFF
-            r_pcrel = (upacked >> 24) & 1
-            r_length = (upacked >> 25) & 3
-            r_extern = (upacked >> 27) & 1
-            r_type = (upacked >> 28) & 0xF
-            relocs[key].append({
-                "address": r_address,
-                "symbolnum": r_symbolnum,
-                "pcrel": r_pcrel,
-                "length": r_length,
-                "extern": r_extern,
-                "type": r_type,
-            })
+        for sec in sections:
+            if sec["sectname"] != secname or sec["nreloc"] == 0:
+                continue
+            for i in range(sec["nreloc"]):
+                ro = sec["reloff"] + i * 8
+                r_address, packed = struct.unpack_from("<Ii", data, ro)
+                upacked = packed & 0xFFFFFFFF
+                r_symbolnum = upacked & 0xFFFFFF
+                r_pcrel = (upacked >> 24) & 1
+                r_length = (upacked >> 25) & 3
+                r_extern = (upacked >> 27) & 1
+                r_type = (upacked >> 28) & 0xF
+                relocs[key].append({
+                    "address": sec["addr"] + r_address,
+                    "symbolnum": r_symbolnum,
+                    "pcrel": r_pcrel,
+                    "length": r_length,
+                    "extern": r_extern,
+                    "type": r_type,
+                })
 
     with open("obj_sections.json", "w") as f:
         json.dump(sections, f, indent=2)

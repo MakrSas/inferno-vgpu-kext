@@ -116,9 +116,23 @@ def main():
     relocs = json.load(open("obj_relocs.json"))
     kernel_syms = load_kernel_symbols()
 
-    sections = {s["sectname"]: s for s in json.load(open("obj_sections.json"))}
+    sections_list = json.load(open("obj_sections.json"))
+    sections = {s["sectname"]: s for s in sections_list}
     text = sections["__text"]
     const = sections["__const"]
+
+    # A section name can appear more than once (see parse_obj.py's comment
+    # on the same issue) -- `sections`/`text`/`const` above only ever see
+    # ONE (whichever came last) of possibly several same-named entries, so
+    # nothing that needs to handle addresses that could land in any of them
+    # (relocations -- already normalized to global addresses by
+    # parse_obj.py -- and vtable-symbol addresses, which are always global)
+    # may use `const_off`/`const["addr"]` arithmetic. Use this instead.
+    def addr_to_fileoff(addr):
+        for sec in sections_list:
+            if sec["addr"] <= addr < sec["addr"] + sec["size"]:
+                return sec["offset"] + (addr - sec["addr"])
+        raise ValueError(f"address {hex(addr)} not within any parsed section")
 
     # local-symbol final VA (within our own injected blob)
     def local_va(sym):
@@ -147,10 +161,9 @@ def main():
     unresolved = []
 
     # ---- __const: UNSIGNED (metaClass/superClass self-pointers) + AUTHENTICATED_POINTER (vtables) ----
-    const_off = const["offset"]
     for r in relocs["const"]:
-        addr = r["address"]  # section-relative already
-        file_pos = const_off + addr
+        addr = r["address"]  # global (parse_obj.py normalizes across possibly-multiple __const sections)
+        file_pos = addr_to_fileoff(addr)
         try:
             target, name = resolve_symbolnum(r["symbolnum"])
         except Exception as e:
@@ -483,7 +496,7 @@ def main():
         if not metaclass_vt_sym:
             print(f"WARNING: {vt_sym_name} not found, skipping vtable layout fixup")
             continue
-        vt_body_off = const_off + (metaclass_vt_sym["value"] - const["addr"]) + 0x10
+        vt_body_off = addr_to_fileoff(metaclass_vt_sym["value"]) + 0x10
         REAL_ALLOC_SLOT, OUR_ALLOC_SLOT = 13, 21
         off_a = vt_body_off + REAL_ALLOC_SLOT * 8
         off_b = vt_body_off + OUR_ALLOC_SLOT * 8
@@ -567,7 +580,7 @@ def main():
         real_body_off = va2off(kc_data, spec["base_vtable_va"] + 0x10)
         next_sym = symtab_by_name[spec["next_const_sym"]]
         n_slots = (next_sym["value"] - instance_vt_sym["value"] - 0x10) // 8
-        our_body_off = const_off + (instance_vt_sym["value"] - const["addr"]) + 0x10
+        our_body_off = addr_to_fileoff(instance_vt_sym["value"]) + 0x10
         for i in range(n_slots):
             raw = struct.unpack_from("<Q", kc_data, real_body_off + i * 8)[0]
             real_va = decode_chained_qword(raw)
@@ -584,11 +597,21 @@ def main():
               f"{sorted(spec['overrides'].keys())}")
 
     # ---- Emit final flat blob: __text + __const + __cstring + mod_init + mod_term ----
+    # Copy every section matching one of these names (not just one per name
+    # via the deduped `sections` dict -- see the addr_to_fileoff() comment
+    # above for why more than one same-named section can exist), each at
+    # its own "addr" position, so a split __const (or any other split
+    # section) round-trips correctly regardless of how many pieces it's in.
     blob_size = sections["__mod_term_func"]["addr"] + sections["__mod_term_func"]["size"]
     blob = bytearray(blob_size)
-    for name in ("__text", "__const", "__cstring", "__mod_init_func", "__mod_term_func"):
-        sec = sections[name]
+    target_names = {"__text", "__const", "__cstring", "__mod_init_func", "__mod_term_func"}
+    emitted = 0
+    for sec in sections_list:
+        if sec["sectname"] not in target_names:
+            continue
         blob[sec["addr"]:sec["addr"] + sec["size"]] = obj[sec["offset"]:sec["offset"] + sec["size"]]
+        emitted += 1
+    print(f"blob emission: copied {emitted} section(s) into the final blob")
 
     with open("resolved_blob.bin", "wb") as f:
         f.write(blob)
