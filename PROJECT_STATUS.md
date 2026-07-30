@@ -52,14 +52,20 @@ not just an isolated test-harness readback.
   patch).
   **`agx_system_metal_test.m` (the test that was supposed to prove this end
   to end via its own dedicated process) has now been run — it does NOT
-  pass.** It crashes (`EXC_BAD_ACCESS`/`SIGSEGV`) before it ever reaches
-  `MTLCreateSystemDefaultDevice()` at all (confirmed via live kernel-GDB
-  breakpoints at the real function's outer entry, its inner
-  `block_invoke`, and every step of our own patch — none of them ever
-  fire), i.e. **this is not a bug in our patch** — something earlier in
-  process launch is faulting. Full diagnostic writeup, what's ruled out,
-  and the leading hypothesis are in a new section right after this one,
-  "`agx_system_metal_test` crash investigation (2026-07-30)".
+  pass, in either of its two variants.** It crashes (`EXC_BAD_ACCESS`/
+  `SIGSEGV`) before it ever reaches `MTLCreateSystemDefaultDevice()` at all
+  (confirmed via live kernel-GDB breakpoints at the real function's outer
+  entry, its inner `block_invoke`, and every step of our own patch — none
+  of them ever fire), i.e. **this is not a bug in our patch** — something
+  earlier in process launch is faulting. The leading hypothesis (dyld
+  eager-binding of the direct C-symbol reference) was tested empirically by
+  rewriting the test to use `dlsym(RTLD_DEFAULT, "MTLCreateSystemDefaultDevice")`
+  instead of a direct call (preserving the original as
+  `agx_system_metal_test_direct.m`) — **it crashes identically either way**,
+  which disproves that hypothesis; the real cause is still unidentified.
+  Full diagnostic writeup, what's ruled out, and next steps are in a new
+  section right after this one, "`agx_system_metal_test` crash investigation
+  (2026-07-30)".
 
 **CONFIRMED WORKING, live, visually verified via QEMU screendump (2026-07-30):**
 - `INFERNO_VGPU_OP_PRESENT` renders and blits a real triangle (AIR→SPIR-V via
@@ -248,6 +254,121 @@ breakpoints removed, VM confirmed `running` (not paused) via QMP, `dmesg`
 scanned for panics (none), and `/compute_test` re-run as a sanity check
 (still passes, `result = 42 (expect 42)`) to confirm the GDB session
 itself didn't corrupt anything.
+
+### UPDATE 2026-07-30 (later session): fast empirical test (next step #2 above)
+### tried and DISPROVEN -- eager-binding-of-the-C-symbol hypothesis is dead
+
+Picked up exactly at "next steps for whoever picks this up" step 2: rewrote
+`agx_system_metal_test.m` to resolve the device-creation entry point via
+`dlsym(RTLD_DEFAULT, "MTLCreateSystemDefaultDevice")` and call through the
+resulting function pointer, instead of calling the real exported C symbol
+`_MTLCreateSystemDefaultDevice` directly at compile/link time. Rest of the
+test (texture, library x2, function x2, pipeline state, queue, command
+buffer, render encoder, draw, commit, readback) kept byte-identical. Per the
+task's own explicit instruction, the original direct-symbol-call version was
+preserved unchanged (not deleted/overwritten) as
+`src/userspace_test/agx_system_metal_test_direct.m`, and both now build in
+CI side by side in the `agx-bridge-dylib` job (`.github/workflows/build.yml`,
+same `clang -target arm64e-apple-ios14.0 ... -framework Foundation
+-framework Metal ...` flags as before, no flag changes needed since dropping
+the direct call means the linker never needs to bind that one C symbol at
+all -- `-framework Metal` stays linked regardless, since it's still needed
+for the ObjC classes/protocols, `#include <dlfcn.h>` added for the new
+`dlsym()` call).
+
+Pushed (commit `cc9ad7b8df25febda84c500a803b1b7605c10d8f`), CI run
+`30576781147` (`agx-bridge-dylib` job) succeeded, both new/changed compile
+steps green. Downloaded the `agx-bridge-dylib` artifact:
+`agx_system_metal_test` (the new dlsym variant, 68944 bytes) and
+`agx_system_metal_test_direct` (the preserved original, 68992 bytes --
+matches the previously-documented direct-call binary's size exactly, good
+sanity check that nothing changed in that variant). Transferred the dlsym
+variant to the guest (`/agx_system_metal_test`, chunked transfer, 875.7s,
+size verified 68944==68944) and ran it via plain direct `execve()`, zero GDB
+attached, guest's root `/` already writable from the still-running QEMU
+process (no remount needed).
+
+**Result: it crashes identically.** `Segmentation fault: 11` (exit 139) --
+the exact same signal, same exit code, as the original direct-call version.
+`/tmp/m_trace.log` (written as the literal first statement inside `main()`,
+before even the `dlsym()` call) is **still never created**, meaning
+execution never reaches the first line of `main()` **even with the direct
+C-symbol reference removed entirely**. `dmesg` (`grep -iE
+'agx_system|amfi|sandbox.*execve|killing pid'`) shows zero matches for this
+run, confirming (same as the original investigation) this is a genuine
+SIGSEGV, not a disguised SIGKILL-gate-style policy kill.
+
+**This conclusively disproves the eager-binding-of-that-one-C-symbol
+hypothesis.** The dlsym-based binary contains no direct link-time reference
+to `_MTLCreateSystemDefaultDevice` anywhere in its compiled object code --
+there is nothing left for dyld to eagerly (or lazily) bind for that symbol
+at process-launch time -- yet the crash is byte-for-byte the same failure
+signature, still happening before `main()` is ever entered. Since `main()`
+is never reached in *either* variant, the crash cannot be caused by
+anything `main()`'s body does: not the device-acquisition strategy (direct
+call vs. `dlsym(RTLD_DEFAULT, ...)`), not the `MTrace()` file-logging helper
+(never called), not the render pipeline logic -- none of that code ever
+executes. Whatever is faulting is happening earlier than any source-level
+difference between the two variants of this file.
+
+**Follow-up diff against the known-passing `agx_metal_api_draw_test.m`**
+(per the task's own suggested comparison): the two files are structurally
+near-identical -- same object graph end to end (`MTLTextureDescriptor`,
+`MTLRenderPipelineDescriptor`, `MTLRenderPassDescriptor`, same protocols,
+same two AIR shaders, same `-framework Foundation -framework Metal` compile
+flags). The only remaining source-level differences are (a)
+`agx_system_metal_test.m`'s extra `fcntl.h`/`unistd.h`/`string.h` includes
+and `MTrace()` helper -- irrelevant, since that code is never reached in the
+crashing binary -- and (b) the passing test always calls `dlopen("/b",
+RTLD_NOW)` near the top of `main()` while both variants of the failing test
+do not -- also irrelevant on its face, since this too is `main()`-body code
+that never executes before the crash. Neither identified difference can
+explain a **pre-main()** crash. This means the actual differentiator is
+something at the compiled-Mach-O/dyld-processing level not yet identified
+by source inspection alone (e.g. total binary layout, load-command
+count/ordering/size, or some codegen difference not visible in the ObjC
+source) -- genuinely a different, deeper question than "which symbol does
+this call directly," and per this task's own instructions this is the
+right point to stop rather than keep guessing blindly.
+
+**Environment left clean, same as before**: this session never touched GDB
+at all (debug port 1234 unused throughout -- the whole test was a
+rebuild+retransfer+direct-exec cycle). `dmesg` scanned for panics/asserts
+(none), QMP `info status` confirmed `running` (not paused, expected since
+no GDB session ever attached), and `/compute_test` re-run as a sanity check
+(still passes, `IOServiceOpen succeeded`, `result = 42 (expect 42)`, exit
+0) to confirm nothing in the guest was disturbed by this investigation.
+
+**Next steps for whoever picks this up next** (step 2 above is now closed
+out; step 1 remains the live option, plus a new one this session's finding
+suggests):
+1. (Unchanged from before) Find dyld's own lazy/eager-binding entry point's
+   VA and breakpoint there directly -- though this session's finding makes
+   this less likely to be fruitful on its own, since there's no longer a
+   specific symbol-binding call to catch in the dlsym variant, and it
+   crashes the same way regardless.
+2. **New, better-targeted idea given this session's finding**: breakpoint
+   the binary's own real Mach-O entry point (`LC_MAIN` `entryoff`, `0x4000`
+   for these binaries per the load-command dump already in the SIGKILL
+   section above, i.e. VA = wherever `__TEXT` gets mapped + `0x4000`) to
+   determine whether the crash happens *before* dyld ever hands control to
+   this image's own code at all, or *after* (e.g. inside this binary's own
+   C runtime startup / ObjC `+load`/static-initializer machinery, before
+   reaching hand-written `main()`). This would cleanly split the search
+   space into "purely a dyld-internal fault, unrelated to this binary's own
+   code" vs. "something in how this specific translation unit's startup
+   code is structured/ordered." Not attempted this session per the task's
+   explicit instruction to stop and report once the fast-empirical
+   hypothesis was disproven, rather than open a new live-debugging
+   investigation unbounded.
+3. A structural (not just source-text) diff of the compiled Mach-O headers/
+   load commands between `agx_system_metal_test` (either variant) and
+   `agx_metal_api_draw_test` -- e.g. via a small from-scratch Mach-O header
+   parser (this project already has the pieces: `resolve.py`/
+   `patch_kernelcache.py`'s segment-walk logic, `off2va.py` from the SIGKILL
+   investigation) -- would be a cheap, no-GDB-needed way to narrow down
+   *what* about this binary's compiled structure differs, before spending a
+   GDB session on step 2.
 
 ## CRITICAL: the SIGKILL mystery and its workaround
 
