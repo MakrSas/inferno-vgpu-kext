@@ -31,6 +31,7 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOUserClient.h>
+#include <IOKit/IOLib.h> // IOSleep()
 
 // Real, exported XNU-internal function (not part of any public IOKit header
 // -- hand-declared here) that walks the live kernel page tables to translate
@@ -44,6 +45,25 @@
 // across rebuilds/reboots of the same kernelcache, so no hardcoded constant
 // can ever be correct here; it must be looked up fresh every boot.
 extern "C" uint64_t kvtophys(uintptr_t va);
+
+// Real, exported XNU kernel-internal thread primitives (not part of any
+// IOKit header -- IOTimerEventSource/IOWorkLoop's event-source machinery
+// was tried first for the boot-time present-dispatch retry loop below, but
+// confirmed via kernel-symbols.txt that this exact kernelcache build
+// exports NO IOTimerEventSource methods at all, so that whole approach is
+// unusable here. These lower-level, plain-C thread primitives ARE
+// exported. Types are declared as generic pointer/int-sized placeholders
+// (not the real `thread_t`/`kern_return_t`/`wait_result_t` typedefs, which
+// would need mach headers this project doesn't have) -- ABI-compatible
+// regardless, since ARM64's calling convention only cares about a
+// parameter's size/register class, not its C type name.
+extern "C" {
+	typedef void (*inferno_thread_continue_t)(void *parameter, int wait_result);
+	int kernel_thread_start(inferno_thread_continue_t continuation, void *parameter, void **new_thread);
+	void *current_thread(void);
+	void thread_deallocate(void *thread);
+	int thread_terminate(void *thread);
+}
 
 // Markers for the first real-userspace test (IOServiceOpen -> newUserClient
 // -> externalMethod -> GetVersion): written unconditionally the moment each
@@ -145,14 +165,28 @@ public:
 	static volatile uint8_t *ringBase(void) { return (volatile uint8_t *)FIFO_TEST_RING_ADDR; }
 
 	// Fires one hardcoded INFERNO_VGPU_OP_PRESENT (a real Metal triangle
-	// draw, rendered onto the live display) straight from kernel context at
-	// boot -- see start(). Entirely sidesteps every userspace-security
-	// mechanism (AMFI/codesigning, the exec()-time SIGKILL that blocks
-	// every fresh unsigned userspace binary, and the Sandbox.kext
+	// draw, rendered onto the live display) straight from kernel context.
+	// Entirely sidesteps every userspace-security mechanism (AMFI/
+	// codesigning, the exec()-time SIGKILL that blocks every fresh
+	// unsigned userspace binary, and the Sandbox.kext
 	// com.apple.security.iokit-user-client-class entitlement gate that
 	// blocks IOServiceOpen from already-running signed processes like
-	// bash) since kernel code is subject to none of them.
-	void submitBootPresentDispatch(void);
+	// bash) since kernel code is subject to none of them. Returns the
+	// device's LAST_STATUS (0=ok, 1=render failed, 2=no active display
+	// genpipe yet -- see inferno-vgpu.h), or 0xffffffff if it never even
+	// reached the device (bad size/no MMIO map).
+	uint32_t submitBootPresentDispatch(void);
+	// start() runs far too early for this -- the real iOS display driver
+	// hasn't necessarily enabled any genpipe yet (confirmed empirically:
+	// the render itself succeeds, inferno_vgpu_present_frame() just finds
+	// no active genpipe to write into, so it correctly no-ops rather than
+	// crash). Retries on a dedicated kernel thread (IOSleep between
+	// attempts) instead of blocking start() itself (IOKit service matching
+	// has its own patience for how long start() may block) until it
+	// succeeds or gives up. NOT IOTimerEventSource -- confirmed via
+	// kernel-symbols.txt that this exact kernelcache build exports no
+	// IOTimerEventSource methods at all.
+	static void presentRetryThreadMain(void *parameter, int wait_result);
 
 private:
 	uint32_t submitPacket(uint16_t opcode, const uint8_t *payload, uint32_t payloadLen);
@@ -195,11 +229,35 @@ bool InfernoVGPUHello::start(IOService *provider)
 
 	submitTestFifoPacket();
 
-	submitBootPresentDispatch();
+	void *presentThread = NULL;
+	kernel_thread_start(&InfernoVGPUHello::presentRetryThreadMain, this, &presentThread);
+	if (presentThread != NULL) {
+		thread_deallocate(presentThread); // drop our reference; the thread runs detached
+	}
 
 	registerService();
 
 	return true;
+}
+
+void InfernoVGPUHello::presentRetryThreadMain(void *parameter, int wait_result)
+{
+	(void)wait_result;
+	// Plain cast, not OSDynamicCast -- see project notes elsewhere in this
+	// file: our hand-linked OSMetaClass doesn't reliably support it, and we
+	// are the only spawner of this thread, so it's exactly as correct here.
+	InfernoVGPUHello *self = (InfernoVGPUHello *)parameter;
+	for (int attempt = 0; attempt < 15; attempt++) {
+		IOSleep(2000);
+		uint32_t status = self->submitBootPresentDispatch();
+		if (status == 0) {
+			break; // success
+		}
+		// else: keep retrying (e.g. status 2 == no active display genpipe
+		// yet, expected for the first several seconds of boot) until the
+		// attempt budget above runs out.
+	}
+	thread_terminate(current_thread());
 }
 
 // Same vertex_passthrough/fragment_solid_red pair already proven end to end
@@ -247,7 +305,7 @@ static const char kBootPresentFragAir[] =
 	"!3 = !{i32 0, !\"air.render_target\", i32 0, i32 0, !\"air.arg_type_name\", !\"float4\"}\n"
 	"!4 = !{i32 0, !\"air.position\", !\"air.center\", !\"air.arg_type_name\", !\"float4\"}\n";
 
-void InfernoVGPUHello::submitBootPresentDispatch(void)
+uint32_t InfernoVGPUHello::submitBootPresentDispatch(void)
 {
 	const uint32_t vertLen = (uint32_t)(sizeof(kBootPresentVertAir) - 1);
 	const uint32_t vertPad = (4 - (vertLen % 4)) % 4;
@@ -272,7 +330,7 @@ void InfernoVGPUHello::submitBootPresentDispatch(void)
 	// under a typical kernel stack frame's headroom.
 	uint8_t payload[2048];
 	if (total > sizeof(payload)) {
-		return;
+		return 0xffffffff;
 	}
 
 	uint32_t off = 0;
@@ -293,6 +351,7 @@ void InfernoVGPUHello::submitBootPresentDispatch(void)
 
 	uint32_t status = submitPresentDispatch(payload, total);
 	*(volatile uint32_t *)BOOT_PRESENT_STATUS_MARKER_ADDR = 0x600D0000 | (status & 0xff);
+	return status;
 }
 
 uint32_t InfernoVGPUHello::readVersionRegister(void)
