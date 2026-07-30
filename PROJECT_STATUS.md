@@ -128,7 +128,16 @@ not just an isolated test-harness readback.
   build** — or (b) building out our `AGXPrincipalDevice` fallback layer's
   `MTLDeviceSPI` conformance far enough (~523 private methods beyond the 112
   public `MTLDevice` ones) that it could actually be trusted for real
-  compositing. Not attempted yet.
+  compositing. Not attempted yet. **New strategic direction instead,
+  investigated in "App-level Metal reach, IOSurface hand-off, and genpipe
+  layering investigation (2026-07-31)" below**: leave backboardd untouched
+  and get individual apps' own Metal-rendered content into backboardd's
+  existing compositing via CoreAnimation's private cross-process
+  `CAContext`/layer-hosting mechanism (the same one already used, live, by
+  this build's own Today-View widgets) — a real, concrete interception
+  point, and a materially different (cooperative, not adversarial/one-shot)
+  architecture than the genpipe-overwrite trick the on-screen-triangle
+  milestone above uses.
 
 ## `backboardd`/compositor Metal-reach investigation (2026-07-31)
 
@@ -321,6 +330,345 @@ GDB breakpoints removed, `/sigkill_test`/`/compute_test` sanity-checked
 (both as documented above), `dmesg` scanned for panics/asserts (none).
 No kernel-side or userspace-side files were changed this session — purely
 investigative, per the task's own scope.
+
+## App-level Metal reach, IOSurface hand-off, and genpipe layering
+## investigation (2026-07-31)
+
+Direct follow-up to the backboardd investigation immediately above, and to
+this project's new strategic direction: since backboardd itself never
+touches Metal, can an individual **app** get Metal-rendered content into
+backboardd's existing, unmodified compositing anyway? Three questions,
+answered in order below. QEMU was already running from the prior session
+(same pid); reused it rather than restarting, per the coordination note.
+Debug port 1234 (GDB) was **not used at all this session** — every finding
+below came from the guest serial console (`ps`, `grep -a`/`dd`/`od` on
+binaries, `dmesg`) and from reading this project's own existing source
+(`apple_displaypipe_v4.c`, `t8030.c`). Purely investigative — no kernel or
+userspace files changed.
+
+### 1. Does any app in this build reach CAMetalLayer/IOSurface-for-Metal-rendering code?
+
+**This project's own test suite: confirmed no, by source inspection.**
+Grepped every file in `src/userspace_test/` (all 16 `.m`/`.c` files,
+including `agx_metal_api_compute_test.m`, `agx_metal_api_draw_test.m`,
+`agx_functional_test.m`, `agx_system_metal_test.m`/`_direct.m`, and the
+bridge itself) for `CAMetalLayer`/`IOSurface`: **zero matches, in every
+single file.** This confirms in the strongest possible terms what
+`PROJECT_STATUS.md`'s own "Fully proven" section already implied (offscreen
+`MTLTexture` + `getBytes` readback only): the `CAMetalLayer` → `IOSurface`
+→ backboardd path has **literally never been exercised anywhere in this
+project**, test or bridge code alike. It isn't a matter of verifying
+existing coverage — it would need to be built from scratch.
+
+**Live process inventory, this exact boot (`ps auxww`, ~174 processes).**
+This is a genuinely minimal research boot: no user-facing foreground app is
+running at all (no Safari/Messages/Camera/etc., nothing in the
+foreground). The only non-daemon, real app-bundle code actually executing
+is a handful of Today-View widget extension processes SpringBoard's home
+screen hosts: `WeatherWidget` (pid 223), `StocksWidget` (pid 360),
+`PhotosReliveWidget` (pid 357), `GeneralMapsWidget` (pid 352),
+`ScreenTimeWidgetExtension` (pid 349) — each a real `.appex` under
+`/private/var/containers/Bundle/Application/<UUID>/<App>.app/PlugIns/`,
+plus an ephemeral `com.apple.MapKit.SnapshotService.xpc` process spawned
+per snapshot request (pid 598 at the time of this check; two *earlier*
+instances, pids 363/364, are the ones with the interesting evidence
+below). `SpringBoard` itself (pid 57) is of course also running, per the
+prior investigation.
+
+**Static analysis, same technique as backboardd (no otool/ipsw; `dd`+`od`
+header dump and `grep -a` raw-byte symbol search over the guest serial
+console) — negative across the board, but for an interesting, generalizable
+reason.** Checked `SpringBoard`, `com.apple.MapKit.SnapshotService.xpc`,
+and `GeneralMapsWidget` for the same symbol set the backboardd
+investigation used (`CAMetalLayer`, `MTLCreateSystemDefaultDevice`,
+`MTLDevice`, `MTLCommandQueue`, `MTLTexture`, `IOSurfaceCreate`,
+`CARenderServer`), with `objc_msgSend` as a positive control for "does
+this file contain any real compiled code at all":
+
+| binary | size on disk | Metal/IOSurface symbols | `objc_msgSend` hits |
+|---|---|---|---|
+| `SpringBoard` | 58,928 B | 0 | **0** |
+| `com.apple.MapKit.SnapshotService.xpc` | 72,848 B | 0 | 1 |
+| `GeneralMapsWidget` (in Maps.app) | 738,448 B | 0 | 2 |
+
+Every single app-level binary checked is a **thin dyld_shared_cache stub**,
+not a real standalone Mach-O like backboardd was. `SpringBoard`'s zero
+`objc_msgSend` hits is the sharpest confirmation: a file with *zero*
+references to ObjC's own message-dispatch stub contains essentially no
+compiled logic of its own at all — pure launcher stub, matching (and now
+directly confirming, rather than inferring from segment size) the prior
+investigation's characterization. `GeneralMapsWidget`, despite being 10-13x
+bigger on disk than the other two, still only has 2 `objc_msgSend`
+references — the extra size is almost certainly `Info.plist`/asset/
+entitlement data and `NSExtension` boilerplate, not code. **This
+generalizes the backboardd investigation's SpringBoard-specific caveat to
+the whole app tier of this build**: static on-disk analysis of application
+code is structurally blocked here, full stop, not just unlucky for one
+binary — real app logic universally lives in the dyld_shared_cache, and
+nothing short of a DSC symbol/export-trie parser (`ipsw`, still not
+installed on this Linux host) will see inside it.
+
+**Live/dynamic evidence closes part of the gap the static analysis
+couldn't, and directly answers the core question: yes.** Re-ran (fresh
+this session, not just citing the prior investigation's single already-
+documented hit) `dmesg | grep -i mapkit` and found **two independent,
+reproducible hits**, on two different ephemeral pids, each bearing this
+project's own established positive-control signature for "a real,
+unmodified process's own call to `MTLCreateSystemDefaultDevice()` reached
+our `___MTLCreateSystemDefaultDevice_block_invoke` patch and attempted
+`dlopen("/b")`":
+
+```
+[ 1031.098551]: Sandbox: com.apple.MapKit(363) deny(1) file-read-metadata /b
+                 Sandbox: com.apple.MapKit(363) deny(1) file-read-data /b
+                 ... (repeats) ... memorystatus: ... for StocksWidget:360
+[ 2894.476932]: Sandbox: com.apple.MapKit(364) deny(1) file-read-metadata /b
+                 Sandbox: com.apple.MapKit(364) deny(1) file-read-data /b
+                 ... (repeats) ... memorystatus: ... for GeneralMapsWidget:352
+```
+
+Cross-checked this is genuinely unique to MapKit: `grep -oE 'Sandbox:
+[A-Za-z.]+\([0-9]+\) deny\(1\) [a-z-]+ /b'` over the **entire** captured
+dmesg buffer returns matches **only** for `com.apple.MapKit` — not
+SpringBoard, not any other widget, not backboardd. **MapKit's map-tile/
+snapshot rendering is the one and only real, currently-live iOS subsystem
+in this build confirmed to attempt Metal device creation** — a completely
+independent, real Apple framework, not our own test code, doing so
+unprompted as part of its normal operation (rendering a map snapshot for
+the `GeneralMapsWidget` Today-View widget). Because our sandbox profile
+doesn't permit `com.apple.MapKit`'s XPC service to read `/b` (unlike
+`/bin/bash`'s root shell, already confirmed permitted), the `dlopen` fails
+and MapKit never actually obtains our bridge device — so this proves the
+code path is **live and real**, not that it currently **succeeds**.
+
+Whether MapKit goes on to construct an actual `CAMetalLayer`/Metal-backed
+`IOSurface` after this failed device-creation attempt (as opposed to
+falling back to CPU tile rendering, the same way backboardd's own
+compositor already does) could not be determined this session — would need
+either DSC introspection tooling for MapKit.framework's own private
+rendering backend, or a live GDB session timed to catch one of these
+~31-minute-apart refresh cycles in the act (not attempted — out of this
+session's read-only/investigative scope, and the existing evidence already
+answers the question this task actually asked). Also worth recording:
+`dmesg` contains **zero** matches for `IOSurface` anywhere in the whole
+buffer, for any process — IOSurface calls apparently aren't sandbox-logged
+at all (unlike the Metal-via-`/b` signature), so this passive channel is a
+dead end for extending the investigation any further this way.
+
+### 2. How does backboardd discover/receive surfaces from other processes?
+
+Extended the prior investigation's own step-2 symbol sweep of backboardd's
+Mach-O (same `dd`/`od` + `grep -a` technique, no new tooling) with a much
+wider symbol set, specifically targeting the cross-process hand-off
+question the prior session flagged as unresolved.
+
+**backboardd's own `IOSurface*` symbol set is narrow, and shaped like
+"create and read my own surface," not "receive someone else's":**
+`_IOSurfaceCreate`, `_IOSurfaceLock`, `_IOSurfaceUnlock`,
+`_IOSurfaceGetBaseAddress`, `_IOSurfaceGetBytesPerRow`,
+`_IOSurfaceGetWidth`, `_IOSurfaceGetHeight`, `_IOSurfaceGetAllocSize` (plus
+the `IOSurfaceWidth`/`Height`/`PixelFormat`/`BytesPerElement`/
+`BytesPerRow`/`AllocSize` CFDictionary property-key strings passed to
+`IOSurfaceCreate`). **Zero matches** for any of the classic IOSurface
+cross-process-handoff API: `IOSurfaceCreateXPCObject`, `IOSurfaceLookup`,
+`IOSurfaceLookupFromMachPort`, `IOSurfaceCreateMachPort`. Conclusion:
+**backboardd's own compiled code never receives a surface handle from
+another process via the public IOSurface sharing API** — whatever it
+composites into is a surface it made itself.
+
+**backboardd DOES reference a small, specific, and very telling
+CoreAnimation private-render-server symbol set.** `_CARenderServerRenderDisplay`
+(the well-known private "ask the render server to redraw a display" entry
+point — the same one macOS's `WindowServer` exposes; internal string
+evidence, `com.apple.CoreAnimation.CAWindowServer.SecureModeV...`, shows
+Apple's own code still calls this subsystem "CAWindowServer" internally
+even on iOS, where the hosting *process* is backboardd, not a process named
+WindowServer); `_CATransaction`/`_wrapInCATransaction`/
+`formSynchronizedWithCATransaction`; and a cluster of private `kCAContext*`
+CFString option-key constants (`kCAContextDisplayId`, `kCAContextSecure`,
+`kCAContextDisableGroupOpacity`, `kCAContextIgnoresHitTest`, ...) plus
+`tokenForIdentifierOfCAContext` — i.e. backboardd's own code constructs/
+looks up `CAContext` objects by a numeric context identifier.
+
+**The single most direct finding, and the answer to this task's core
+question**: backboardd's own binary contains
+`hostContextIDForEmbeddedContextID`, `contextIdHostingContextId`,
+`hostingChain`, `hostingChainIndex`, `setHostingChain`,
+`cancelsTouchesInHostedContent`, `hostCanRequireTouchesFromHostedContent`.
+backboardd's own code implements/consumes CoreAnimation's private
+cross-process **layer-hosting** mechanism: one process's `CAContext`
+(identified by a numeric `contextId`) can be registered as "embedded"
+within another process's ("host") context, forming a `hostingChain`. This
+is Apple's standard, project-independent mechanism for exactly this kind
+of cross-process UI composition — e.g. the Today-View widget extensions
+this session found actually running (`WeatherWidget`/`StocksWidget`/
+`GeneralMapsWidget`/etc.) render their own layer trees, which get embedded
+into SpringBoard's UI and are ultimately drawn by backboardd's
+`CARenderServerRenderDisplay` — **without backboardd ever needing to call
+`IOSurfaceLookup` itself**, because the actual surface hand-off plumbing
+lives one level down, inside QuartzCore's own private `CARenderServer`
+implementation (which, per the prior investigation, is dyld_shared_cache-
+resident and outside what static analysis of backboardd's own TEXT can
+see — same tooling gap as section 1 above, now localized to a specific,
+named subsystem instead of "somewhere in QuartzCore").
+
+Supporting negative result: no bespoke "submit new layer content" IPC
+service name was found — a literal `backboard_svc` search returned 0
+matches, and the extensive `com.apple.backboard.*`/`com.apple.backboardd.*`
+namespace found (~60+ distinct strings: touch delivery, HID, orientation,
+haptics, display brightness, watchdogs, ...) contains nothing that looks
+like a content-submission entry point. This reinforces that content
+submission genuinely goes through CoreAnimation's own `CAContext`/hosting-
+chain protocol, not a bespoke backboardd-specific channel. Also:
+`IOMobileFramebuffer` symbols in backboardd remain limited to
+`_IOMobileFramebufferOpen`/`_IOMobileFramebufferSetDebugFlags` (matching
+the prior investigation) — no `SwapBuffer`/`DisplaySurface`-style symbol
+found either, suggesting the final swap/present call is *also* issued from
+inside QuartzCore's DSC-resident `CARenderServer` code (triggered by
+`CARenderServerRenderDisplay`), not directly from backboardd's own
+hand-written code. The overall shape: backboardd is a fairly thin
+orchestrator around QuartzCore's private render server, which does
+essentially all of the actual surface-handling and framebuffer-pushing
+work internally.
+
+**Bottom line for task 2**: there is a plausible, concrete interception
+point, and it is *not* raw IOSurface-port-passing at the backboardd level
+— it's CoreAnimation's own private cross-process `CAContext`/layer-hosting
+protocol (`CAContext` + numeric `contextId` + `hostingChain`). A process
+that (a) creates a `CAContext`, (b) renders into a `CALayer` whose backing
+store is a Metal/Vulkan-produced `IOSurface` within that context, and (c)
+gets that context registered into another process's hosting chain (exactly
+the way the Today-widget extensions already, actually are, right now, in
+this exact boot) would have its content picked up and drawn by
+backboardd's existing, **completely unmodified** `CARenderServerRenderDisplay`
+call, the same as any other embedded content. This isn't a hypothetical
+mechanism reasoned about from first principles — it's Apple's own, already
+proven live and in active use by real running processes in this session's
+own `ps` output. Residual gap, same shape as the prior investigation's
+"chase the QuartzCore-internal angle" item: the actual surface-lookup/
+Mach-port mechanics *inside* CARenderServer's own DSC-resident
+implementation weren't traced further this session (needs `ipsw`/a DSC
+parser, same known gap as ever). What this session adds beyond the prior
+investigation is the exact vocabulary to target once that gap closes
+(`CAContext`, `contextId`, `hostingChain`), plus independent confirmation
+that this mechanism is live and actively exercised in this exact build
+right now, not just theoretically present.
+
+### 3. Is genpipe pre- or post-backboardd-compositing?
+
+Read `hw/display/apple_displaypipe_v4.c` (1093 lines) and the relevant
+`t8030.c` wiring in full — no live debugging needed, confirming the task's
+own suggestion that source-reading would be more productive here.
+
+- `AppleDisplayPipeV4State` models **one** hardware display pipe.
+  `t8030.c` instantiates exactly one (`object_property_add_child(OBJECT(t8030),
+  "disp0", OBJECT(sbd))`, wired from the device tree's single
+  `arm-io/disp0` node) — this is the one, real, physical ADP (Apple
+  Display Pipe) scanout engine T8030 silicon has, not a general per-app/
+  per-window compositor abstraction. It has 2 `genpipe`s
+  (`ADP_V4_GP_COUNT == 2`) — the 2 hardware DMA-source "generic pipe"
+  layers real Apple display hardware exposes (main content + one overlay
+  layer), not an arbitrary-N-layer software compositor.
+- `adp_v4_gp_read()` — the pre-existing hardware-emulation path that models
+  what the real display driver's normal per-frame activity already does —
+  DMA-*reads* from `genpipe->state.data_start`, a guest-physical address
+  programmed by the **guest kernel's own real display driver** via the
+  `GP_LAYER_0_DATA_START` hardware register, then composites it with
+  `pixman_image_composite(PIXMAN_OP_SRC, ...)` — a straight overwrite
+  blit, not alpha blending — onto the single QEMU display surface, gp0
+  then gp1, every tick.
+- **`adp_v4_present_frame()` (this project's own addition) DMA-*writes*
+  directly into that exact same `genpipe->state.data_start` region** — the
+  identical guest-physical memory the real display driver's own
+  hardware-register-programmed DMA source already points to. This is
+  explicitly documented in the function's own pre-existing comment (line
+  349-360): "the same guest memory the real iOS display driver programs
+  via GP_LAYER_0_DATA_START/etc and that `adp_v4_gp_read()` above already
+  reads from every draw ... it lands in the exact spot the real
+  compositor's own current frame lives."
+
+**Answer, confirmed directly from source, not inferred**: the genpipe
+mechanism is **backboardd's own final, already-composited output — not an
+earlier or per-surface stage.** There is exactly one display pipe modeling
+the one physical scanout engine; its DMA source is programmed by the
+guest's real display driver, which is fed by backboardd's
+`IOMobileFramebufferOpen`-based final composited frame (per task 2's
+findings above); `adp_v4_present_frame()` simply overwrites that same
+memory region after the fact. This confirms the task's own stated
+most-likely hypothesis with direct source evidence.
+
+**Consequence**: the project's existing on-screen-triangle milestone works
+by *overwriting* backboardd's already-fully-composited frame post-hoc — a
+one-shot/adversarial mechanism, which is exactly why it needs the
+already-documented continuous 1s-interval re-presenting hack just to stay
+visible (the real display driver keeps re-DMA'ing backboardd's own fresh
+frames into that same memory region every refresh, stomping the injected
+one). This is architecturally a dead end for "cooperative," ongoing,
+per-app content contribution — confirms genpipe is **not** the mechanism to
+build on for the new strategic direction. The `CAContext`/hosting-chain
+path identified in task 2 is a structurally earlier, and far more
+promising, interception point than genpipe: it sits *before* CARenderServer's
+compositing rather than after it.
+
+### Concrete next steps this session's findings point to
+
+1. **Cheapest possible next experiment, no new test-app engineering at
+   all**: MapKit's own, real, already-live attempt to call
+   `MTLCreateSystemDefaultDevice()` (section 1 above) is blocked purely by
+   a sandbox `file-read-{metadata,data} /b` denial for
+   `com.apple.MapKit`'s XPC service — not by any absence of the code path.
+   Finding and patching that one sandbox check (same class of fix as the
+   still-outstanding `com.apple.security.iokit-user-client-class`
+   entitlement gate from the SIGKILL investigation — a Sandbox.kext MACF
+   hook, almost certainly reachable with the same disassemble-then-patch
+   technique already used repeatedly in this project) would let a **real,
+   unmodified Apple framework's own code** obtain our bridge device and
+   attempt to actually render map tiles through it. This validates (or
+   falsifies) the entire "apps can reach Metal" premise using zero new
+   test-app code, at the cost of one more sandbox-policy patch of a kind
+   this project has already done multiple times. Immediately observable
+   next questions once unblocked: does MapKit's device creation now
+   succeed, and does its own private rendering backend go on to build a
+   `CAMetalLayer`/Metal-backed `IOSurface`, or fall back to CPU rendering
+   even with a working device?
+2. **The real, purpose-built follow-on**: write a new, minimal test app
+   that (a) creates its own `CAContext`, (b) renders Metal content (via
+   this project's already-proven `/b` bridge + `metal2vulkan`/`reims-vgpu`
+   pipeline) into an `IOSurface`-backed `CALayer` within that context, and
+   (c) gets registered into another process's `hostingChain` — most
+   realistically by packaging it the same way the already-working
+   Today-widget extensions are (a real `.appex`/`NSExtension`), since
+   that's a *proven*-live hosting path in this exact build, rather than
+   guessing at a lower-level API. Success criterion: backboardd's
+   existing, **completely unmodified** `CARenderServerRenderDisplay`/
+   hosting-chain compositing picks the content up and it appears
+   genuinely composited into the real on-screen interface (not overwritten
+   post-hoc, per task 3's finding about genpipe) — the real end-to-end
+   proof of this session's whole strategic premise.
+3. Both (1) and (2) still ultimately run into the same `ipsw`/DSC-parser
+   tooling gap flagged repeatedly across this whole document (the prior
+   backboardd investigation, and both open questions in tasks 1 and 2
+   above) for anything that requires seeing *inside* QuartzCore's or
+   MapKit's own dyld_shared_cache-resident code. That gap is not this
+   session's to close, but it is now the single most-referenced blocker
+   across every open thread in this project — worth prioritizing a
+   from-scratch DSC export-trie/symbol-table parser (this project already
+   has adjacent pieces: `resolve.py`/`off2va.py`) purely on the strength of
+   how many independent investigations it would unblock at once.
+
+Environment left clean: QMP `info status` confirmed `running` throughout
+(never paused — GDB/port 1234 wasn't used this session at all),
+`/sigkill_test` → `Segmentation fault: 11` (gate patches intact),
+`/compute_test` → `result = 42 (expect 42)` (guest undisturbed), `dmesg`
+scanned for panics/asserts (none, only ordinary `memorystatus:` chatter).
+One operational note for whoever runs commands over this serial console
+next: a single very long (~1650-character) semicolon-chained shell command
+sent in one line got corrupted mid-transmission and left the guest's bash
+sitting at an open-quote continuation prompt (`>`) — recovered cleanly by
+sending `Ctrl-C` twice over the same connection, no VM/session impact, but
+worth keeping individual command lines short (a few hundred characters)
+over this link, consistent with the file-transfer tooling's own
+already-documented `CHUNK=100`-byte-per-line lesson.
 
 ## `agx_system_metal_test` crash investigation (2026-07-30)
 
