@@ -317,6 +317,25 @@ void InfernoInstallBufferFallback(id device)
 @property (nonatomic, strong) NSData *air;
 @end
 @implementation InfernoFunction
+// Apple's real MTLRenderPipelineDescriptor.vertexFunction/.fragmentFunction
+// setters aren't plain property assignment -- they message -functionType on
+// whatever's assigned to validate it (confirmed live: crashed with
+// "unrecognized selector sent to instance" inside
+// -[MTLRenderPipelineDescriptor setVertexFunction:] before this existed).
+// Detected the same way metal2vulkan's own `detect_stage` does (see project
+// memory): scan the AIR text for its `!air.vertex`/`!air.fragment`/
+// `!air.kernel` stage-metadata marker.
+- (MTLFunctionType)functionType
+{
+    NSString *text = [[NSString alloc] initWithData:_air encoding:NSUTF8StringEncoding];
+    if ([text containsString:@"!air.vertex ="]) {
+        return MTLFunctionTypeVertex;
+    }
+    if ([text containsString:@"!air.fragment ="]) {
+        return MTLFunctionTypeFragment;
+    }
+    return MTLFunctionTypeKernel;
+}
 @end
 
 // NOT real .metallib container parsing: `newLibraryWithData:` below treats
