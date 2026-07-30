@@ -6,7 +6,7 @@ behind each of the formulas used here.
 """
 import json, struct, subprocess, sys, os
 
-KC = os.environ.get("KC", "/tmp/claude-1000/-home-makr-Documents-Inferno/fe200f1f-9db9-4623-9475-b435250a31ad/scratchpad/kc.decompressed")
+KC = os.environ.get("KC", "/home/makr/Documents/Inferno/InfernoData/kernelcache.decompressed")
 OBJ = "obj/InfernoVGPUHello.o"
 
 KERNEL_TEXT_BASE = 0xfffffff007004000   # this kernelcache's __TEXT vmaddr
@@ -110,6 +110,16 @@ def main():
         obj = bytearray(f.read())
     with open(KC, "rb") as f:
         kc_data = f.read()
+    # KC must be the decompressed, unpatched Mach-O (magic 0xfeedfacf) --
+    # not the raw IMG4-wrapped file straight from InfernoData/Restore/
+    # (magic "IM4P"), which silently produces garbage fileoffs deep inside
+    # get_vtable_slot_va()/va2off() (huge bogus unpack_from offsets) instead
+    # of a clear error, once burned chasing that exact failure.
+    kc_magic = struct.unpack_from("<I", kc_data, 0)[0]
+    assert kc_magic == 0xfeedfacf, (
+        f"KC={KC!r} is not a decompressed Mach-O (magic {kc_magic:#x}, "
+        f"expected 0xfeedfacf) -- looks like the raw IMG4 kernelcache; "
+        f"decompress it first (see PROJECT_STATUS.md)")
 
     symtab = {e["idx"]: e for e in json.load(open("obj_symtab.json"))}
     symtab_by_name = {e["name"]: e for e in symtab.values()}

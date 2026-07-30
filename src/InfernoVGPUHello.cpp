@@ -241,15 +241,21 @@ void InfernoVGPUHello::presentRetryThreadMain(void *parameter, int wait_result)
 	// file: our hand-linked OSMetaClass doesn't reliably support it, and we
 	// are the only spawner of this thread, so it's exactly as correct here.
 	InfernoVGPUHello *self = (InfernoVGPUHello *)parameter;
-	for (int attempt = 0; attempt < 15; attempt++) {
-		IOSleep(2000);
+	// 15 attempts * 2s (30s total) was confirmed too short live: at 140s of
+	// QEMU wall-clock boot the guest is still bringing up USB/multitouch,
+	// nowhere near a live display genpipe yet. Widened to 100 * 3s (5min)
+	// -- comfortably past observed emulated-boot time to a usable display,
+	// still bounded so the thread can't spin forever if the genpipe truly
+	// never comes up this boot.
+	for (int attempt = 0; attempt < 100; attempt++) {
+		IOSleep(3000);
 		uint32_t status = self->submitBootPresentDispatch();
 		if (status == 0) {
 			break; // success
 		}
 		// else: keep retrying (e.g. status 2 == no active display genpipe
-		// yet, expected for the first several seconds of boot) until the
-		// attempt budget above runs out.
+		// yet, expected for a good chunk of boot) until the attempt budget
+		// above runs out.
 	}
 	thread_terminate(current_thread());
 }

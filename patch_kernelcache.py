@@ -2,7 +2,8 @@
 import json
 import struct
 
-KC_SRC = "/tmp/claude-1000/-home-makr-Documents-Inferno/eb0072a4-7c1e-4e6f-a189-a503cd782c9a/scratchpad/kc_extract/18A5351d__iPhone11,8_iPhone12,1/kernelcache.research.iphone12b"
+import os
+KC_SRC = os.environ.get("KC", "/home/makr/Documents/Inferno/InfernoData/kernelcache.decompressed")
 KC_OUT = "/home/makr/Documents/Inferno/InfernoData/kernelcache.vgpu2.patched"
 
 INFO_SEC_OFF = 43798088

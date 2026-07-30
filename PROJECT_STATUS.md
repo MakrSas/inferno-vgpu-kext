@@ -269,15 +269,26 @@ another kernel patch — not yet investigated).
 3. `cp <dir>/InfernoVGPUHello.o obj/InfernoVGPUHello.o` (in this repo).
 4. `python3 parse_obj.py obj/InfernoVGPUHello.o` — regenerates
    `obj_sections.json`/`obj_symtab.json`/`obj_relocs.json`.
-5. `KC=/tmp/claude-1000/-home-makr-Documents-Inferno/eb0072a4-7c1e-4e6f-a189-a503cd782c9a/scratchpad/kc_extract/18A5351d__iPhone11,8_iPhone12,1/kernelcache.research.iphone12b
-   python3 resolve.py` — should print `OK: wrote resolved_blob.bin, N bytes,
-   all M relocations resolved` and `18 call site(s) fixed, 0 unrecognized`.
-   **If that exact `KC` path is gone** (it's a leftover from an even older
-   session's scratchpad, not guaranteed to survive indefinitely), you'll
-   need to re-extract the pristine kernelcache per the
+5. `python3 resolve.py` — `KC` now defaults (in `resolve.py` itself) to
+   `/home/makr/Documents/Inferno/InfernoData/kernelcache.decompressed`, a
+   durable copy kept in the project's own data directory specifically so
+   it survives session/scratchpad resets (an earlier copy that only lived
+   under `/tmp/claude-*/.../scratchpad/` was lost this way once already —
+   don't repeat that, always keep the working copy under `InfernoData/`,
+   never scratch-only). Only pass `KC=...` to override. Should print `OK:
+   wrote resolved_blob.bin, N bytes, all M relocations resolved` and `18
+   call site(s) fixed, 0 unrecognized`. `resolve.py` asserts the file's
+   magic is `0xfeedfacf` (decompressed Mach-O) up front — if that assert
+   fires, you pointed it at the raw IMG4 file from `InfernoData/Restore/`
+   by mistake (magic `IM4P`), which otherwise fails silently deep inside
+   vtable-slot resolution with bogus huge file offsets instead of a clear
+   error.
+   **If `InfernoData/kernelcache.decompressed` is gone**, you'll need to
+   re-extract the pristine kernelcache per the
    [chefkiss.dev setup guide](https://chefkiss.dev/guides/inferno/file-setup/)
    (`img4lib`, SEP ticket, etc.) — this file is a plain Mach-O (magic
-   `0xfeedfacf`), decompressed, unpatched.
+   `0xfeedfacf`), decompressed, unpatched. Save the result straight to
+   `InfernoData/kernelcache.decompressed`.
 6. `python3 patch_kernelcache.py` — writes
    `/home/makr/Documents/Inferno/InfernoData/kernelcache.vgpu2.patched`.
 7. Kill the running QEMU process (`ps aux | grep qemu-system`, `kill
