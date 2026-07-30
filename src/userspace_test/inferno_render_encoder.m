@@ -207,8 +207,11 @@ void InfernoInstallRenderPipelineFallback(id device)
 
     NSData *vertAir = [_pipeline.vertexFunction valueForKey:@"air"];
     NSData *fragAir = [_pipeline.fragmentFunction valueForKey:@"air"];
-    NSData *vbufData = [NSData dataWithBytes:[_vertexBuffer valueForKey:@"contents"]
-                                       length:[[_vertexBuffer valueForKey:@"length"] unsignedIntegerValue]];
+    // -contents/-length ARE real, standard MTLBuffer protocol methods (known
+    // to the compiler via <Metal/Metal.h>, unlike the custom cross-file
+    // properties above) -- plain message sends work directly, no KVC needed.
+    id<MTLBuffer> vertexBuffer = _vertexBuffer;
+    NSData *vbufData = [NSData dataWithBytes:vertexBuffer.contents length:vertexBuffer.length];
 
     NSData *pixels = InfernoSendDrawDispatch(conn, vertAir, fragAir, vbufData,
                                               (uint32_t)_target.width, (uint32_t)_target.height,
