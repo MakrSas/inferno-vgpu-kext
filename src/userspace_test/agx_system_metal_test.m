@@ -16,6 +16,23 @@
 // entire object graph through to a real rasterized GPU result.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+
+// See Q()'s own QTrace in inferno_agx_bridge.m for why: this call can be
+// killed with zero stdout, so bracket it in a file-based trace too (separate
+// file so it's obvious which side -- caller vs Q() itself -- got how far).
+static void MTrace(const char *msg)
+{
+    int fd = open("/tmp/m_trace.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (fd < 0) {
+        return;
+    }
+    write(fd, msg, strlen(msg));
+    write(fd, "\n", 1);
+    close(fd);
+}
 
 static const char kVertAir[] =
     "source_filename = \"vertex_passthrough.metal\"\n"
@@ -69,7 +86,9 @@ int main(void)
     @autoreleasepool {
         // The whole point: no dlopen, no dlsym, no Q(). Just the standard,
         // public entry point any app on the system uses.
+        MTrace("main: calling MTLCreateSystemDefaultDevice()");
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        MTrace("main: MTLCreateSystemDefaultDevice() returned");
         CHECK(device != nil, "MTLCreateSystemDefaultDevice() -> %p", (__bridge void *)device);
         if (device == nil) {
             printf("\nSOME CHECKS FAILED\n");
