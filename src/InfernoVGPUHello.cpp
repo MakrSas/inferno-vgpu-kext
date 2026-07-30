@@ -46,24 +46,18 @@
 // can ever be correct here; it must be looked up fresh every boot.
 extern "C" uint64_t kvtophys(uintptr_t va);
 
-// Real, exported XNU kernel-internal thread primitives (not part of any
-// IOKit header -- IOTimerEventSource/IOWorkLoop's event-source machinery
-// was tried first for the boot-time present-dispatch retry loop below, but
-// confirmed via kernel-symbols.txt that this exact kernelcache build
-// exports NO IOTimerEventSource methods at all, so that whole approach is
-// unusable here. These lower-level, plain-C thread primitives ARE
-// exported. Types are declared as generic pointer/int-sized placeholders
-// (not the real `thread_t`/`kern_return_t`/`wait_result_t` typedefs, which
-// would need mach headers this project doesn't have) -- ABI-compatible
-// regardless, since ARM64's calling convention only cares about a
-// parameter's size/register class, not its C type name.
-extern "C" {
-	typedef void (*inferno_thread_continue_t)(void *parameter, int wait_result);
-	int kernel_thread_start(inferno_thread_continue_t continuation, void *parameter, void **new_thread);
-	void *current_thread(void);
-	void thread_deallocate(void *thread);
-	int thread_terminate(void *thread);
-}
+// Real, exported XNU kernel-internal thread primitives, used for the
+// boot-time present-dispatch retry loop below (IOTimerEventSource/
+// IOWorkLoop's event-source machinery was tried first, but confirmed via
+// kernel-symbols.txt that this exact kernelcache build exports NO
+// IOTimerEventSource methods at all, so that whole approach is unusable
+// here). No extern declarations needed for these -- kern/thread.h and
+// mach/thread_act.h, transitively included via the IOKit/Kernel.framework
+// headers this file already pulls in, declare kernel_thread_start,
+// current_thread, thread_deallocate, and thread_terminate (and thread_t)
+// already; redeclaring them with placeholder void*/int types (as an
+// earlier version of this file did) conflicts with those real
+// declarations and fails to compile.
 
 // Markers for the first real-userspace test (IOServiceOpen -> newUserClient
 // -> externalMethod -> GetVersion): written unconditionally the moment each
@@ -229,7 +223,7 @@ bool InfernoVGPUHello::start(IOService *provider)
 
 	submitTestFifoPacket();
 
-	void *presentThread = NULL;
+	thread_t presentThread = NULL;
 	kernel_thread_start(&InfernoVGPUHello::presentRetryThreadMain, this, &presentThread);
 	if (presentThread != NULL) {
 		thread_deallocate(presentThread); // drop our reference; the thread runs detached
