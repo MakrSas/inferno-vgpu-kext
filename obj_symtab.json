@@ -29,7 +29,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12752
+    "value": 13136
   },
   {
     "idx": 4,
@@ -37,7 +37,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12769
+    "value": 13153
   },
   {
     "idx": 5,
@@ -45,7 +45,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12785
+    "value": 13169
   },
   {
     "idx": 6,
@@ -53,7 +53,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12801
+    "value": 13185
   },
   {
     "idx": 7,
@@ -61,7 +61,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12817
+    "value": 13201
   },
   {
     "idx": 8,
@@ -69,7 +69,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12834
+    "value": 13218
   },
   {
     "idx": 9,
@@ -77,7 +77,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12855
+    "value": 13239
   },
   {
     "idx": 10,
@@ -85,7 +85,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12878
+    "value": 13262
   },
   {
     "idx": 11,
@@ -93,7 +93,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12896
+    "value": 13280
   },
   {
     "idx": 12,
@@ -109,7 +109,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 2784
+    "value": 2844
   },
   {
     "idx": 14,
@@ -117,7 +117,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 2864
+    "value": 2924
   },
   {
     "idx": 15,
@@ -125,7 +125,7 @@
     "type": 14,
     "sect": 3,
     "desc": 0,
-    "value": 12680
+    "value": 13040
   },
   {
     "idx": 16,
@@ -133,7 +133,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 7188
+    "value": 7548
   },
   {
     "idx": 17,
@@ -141,7 +141,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 7348
+    "value": 7708
   },
   {
     "idx": 18,
@@ -149,7 +149,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 7268
+    "value": 7628
   },
   {
     "idx": 19,
@@ -157,7 +157,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 7372
+    "value": 7732
   },
   {
     "idx": 20,
@@ -165,7 +165,7 @@
     "type": 14,
     "sect": 1,
     "desc": 0,
-    "value": 7400
+    "value": 7760
   },
   {
     "idx": 21,
@@ -173,7 +173,7 @@
     "type": 14,
     "sect": 2,
     "desc": 0,
-    "value": 12936
+    "value": 13320
   },
   {
     "idx": 22,
@@ -181,7 +181,7 @@
     "type": 14,
     "sect": 3,
     "desc": 0,
-    "value": 7448
+    "value": 7808
   },
   {
     "idx": 23,
@@ -189,7 +189,7 @@
     "type": 14,
     "sect": 4,
     "desc": 0,
-    "value": 12752
+    "value": 13136
   },
   {
     "idx": 24,
@@ -197,7 +197,7 @@
     "type": 14,
     "sect": 5,
     "desc": 0,
-    "value": 12920
+    "value": 13304
   },
   {
     "idx": 25,
@@ -205,7 +205,7 @@
     "type": 14,
     "sect": 6,
     "desc": 0,
-    "value": 12928
+    "value": 13312
   },
   {
     "idx": 26,
@@ -213,7 +213,7 @@
     "type": 15,
     "sect": 2,
     "desc": 0,
-    "value": 12936
+    "value": 13320
   },
   {
     "idx": 27,
@@ -221,7 +221,7 @@
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 7456
+    "value": 7816
   },
   {
     "idx": 28,
@@ -237,7 +237,7 @@
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 6512
+    "value": 6872
   },
   {
     "idx": 30,
@@ -273,6 +273,14 @@
   },
   {
     "idx": 34,
+    "name": "__ZN16InfernoVGPUHello21submitPresentDispatchEPKhj",
+    "type": 15,
+    "sect": 1,
+    "desc": 0,
+    "value": 2784
+  },
+  {
+    "idx": 35,
     "name": "__ZN16InfernoVGPUHello5startEP9IOService",
     "type": 15,
     "sect": 1,
@@ -280,7 +288,7 @@
     "value": 884
   },
   {
-    "idx": 35,
+    "idx": 36,
     "name": "__ZN16InfernoVGPUHello9MetaClassC1Ev",
     "type": 15,
     "sect": 1,
@@ -288,7 +296,7 @@
     "value": 32
   },
   {
-    "idx": 36,
+    "idx": 37,
     "name": "__ZN16InfernoVGPUHello9MetaClassC2Ev",
     "type": 15,
     "sect": 1,
@@ -296,15 +304,15 @@
     "value": 540
   },
   {
-    "idx": 37,
+    "idx": 38,
     "name": "__ZN16InfernoVGPUHello9metaClassE",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 7448
+    "value": 7808
   },
   {
-    "idx": 38,
+    "idx": 39,
     "name": "__ZN16InfernoVGPUHelloC1EPK11OSMetaClass",
     "type": 15,
     "sect": 1,
@@ -312,7 +320,7 @@
     "value": 224
   },
   {
-    "idx": 39,
+    "idx": 40,
     "name": "__ZN16InfernoVGPUHelloC1Ev",
     "type": 15,
     "sect": 1,
@@ -320,7 +328,7 @@
     "value": 732
   },
   {
-    "idx": 40,
+    "idx": 41,
     "name": "__ZN16InfernoVGPUHelloC2EPK11OSMetaClass",
     "type": 15,
     "sect": 1,
@@ -328,7 +336,7 @@
     "value": 136
   },
   {
-    "idx": 41,
+    "idx": 42,
     "name": "__ZN16InfernoVGPUHelloC2Ev",
     "type": 15,
     "sect": 1,
@@ -336,7 +344,7 @@
     "value": 780
   },
   {
-    "idx": 42,
+    "idx": 43,
     "name": "__ZN16InfernoVGPUHelloD0Ev",
     "type": 15,
     "sect": 1,
@@ -344,7 +352,7 @@
     "value": 384
   },
   {
-    "idx": 43,
+    "idx": 44,
     "name": "__ZN16InfernoVGPUHelloD1Ev",
     "type": 15,
     "sect": 1,
@@ -352,7 +360,7 @@
     "value": 328
   },
   {
-    "idx": 44,
+    "idx": 45,
     "name": "__ZN16InfernoVGPUHelloD2Ev",
     "type": 15,
     "sect": 1,
@@ -360,7 +368,7 @@
     "value": 280
   },
   {
-    "idx": 45,
+    "idx": 46,
     "name": "__ZN16InfernoVGPUHellodlEPvm",
     "type": 15,
     "sect": 1,
@@ -368,7 +376,7 @@
     "value": 464
   },
   {
-    "idx": 46,
+    "idx": 47,
     "name": "__ZN16InfernoVGPUHellonwEm",
     "type": 15,
     "sect": 1,
@@ -376,175 +384,183 @@
     "value": 692
   },
   {
-    "idx": 47,
+    "idx": 48,
     "name": "__ZN21InfernoVGPUUserClient10gMetaClassE",
     "type": 15,
     "sect": 2,
     "desc": 0,
-    "value": 12976
+    "value": 13360
   },
   {
-    "idx": 48,
+    "idx": 49,
     "name": "__ZN21InfernoVGPUUserClient10superClassE",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 9936
+    "value": 10296
   },
   {
-    "idx": 49,
+    "idx": 50,
     "name": "__ZN21InfernoVGPUUserClient11clientCloseEv",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 4096
+    "value": 4156
   },
   {
-    "idx": 50,
+    "idx": 51,
     "name": "__ZN21InfernoVGPUUserClient11sGetVersionEPS_PvP25IOExternalMethodArguments",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 4388
+    "value": 4448
   },
   {
-    "idx": 51,
+    "idx": 52,
     "name": "__ZN21InfernoVGPUUserClient12initWithTaskEP4taskPvjP12OSDictionary",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3668
+    "value": 3728
   },
   {
-    "idx": 52,
+    "idx": 53,
     "name": "__ZN21InfernoVGPUUserClient13sDrawDispatchEPS_PvP25IOExternalMethodArguments",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 5324
+    "value": 5384
   },
   {
-    "idx": 53,
+    "idx": 54,
     "name": "__ZN21InfernoVGPUUserClient14externalMethodEjP25IOExternalMethodArgumentsP24IOExternalMethodDispatchP8OSObjectPv",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 4192
+    "value": 4252
   },
   {
-    "idx": 54,
+    "idx": 55,
     "name": "__ZN21InfernoVGPUUserClient16sComputeDispatchEPS_PvP25IOExternalMethodArguments",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 4564
+    "value": 4624
   },
   {
-    "idx": 55,
+    "idx": 56,
+    "name": "__ZN21InfernoVGPUUserClient16sPresentDispatchEPS_PvP25IOExternalMethodArguments",
+    "type": 15,
+    "sect": 1,
+    "desc": 0,
+    "value": 6572
+  },
+  {
+    "idx": 57,
     "name": "__ZN21InfernoVGPUUserClient5startEP9IOService",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3832
+    "value": 3892
   },
   {
-    "idx": 56,
+    "idx": 58,
     "name": "__ZN21InfernoVGPUUserClient9MetaClassC1Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 2816
+    "value": 2876
   },
   {
-    "idx": 57,
+    "idx": 59,
     "name": "__ZN21InfernoVGPUUserClient9MetaClassC2Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3324
+    "value": 3384
   },
   {
-    "idx": 58,
+    "idx": 60,
     "name": "__ZN21InfernoVGPUUserClient9metaClassE",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 9928
+    "value": 10288
   },
   {
-    "idx": 59,
+    "idx": 61,
     "name": "__ZN21InfernoVGPUUserClientC1EPK11OSMetaClass",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3008
+    "value": 3068
   },
   {
-    "idx": 60,
+    "idx": 62,
     "name": "__ZN21InfernoVGPUUserClientC1Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3516
+    "value": 3576
   },
   {
-    "idx": 61,
+    "idx": 63,
     "name": "__ZN21InfernoVGPUUserClientC2EPK11OSMetaClass",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 2920
+    "value": 2980
   },
   {
-    "idx": 62,
+    "idx": 64,
     "name": "__ZN21InfernoVGPUUserClientC2Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3564
+    "value": 3624
   },
   {
-    "idx": 63,
+    "idx": 65,
     "name": "__ZN21InfernoVGPUUserClientD0Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3168
+    "value": 3228
   },
   {
-    "idx": 64,
+    "idx": 66,
     "name": "__ZN21InfernoVGPUUserClientD1Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3112
+    "value": 3172
   },
   {
-    "idx": 65,
+    "idx": 67,
     "name": "__ZN21InfernoVGPUUserClientD2Ev",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3064
+    "value": 3124
   },
   {
-    "idx": 66,
+    "idx": 68,
     "name": "__ZN21InfernoVGPUUserClientdlEPvm",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3248
+    "value": 3308
   },
   {
-    "idx": 67,
+    "idx": 69,
     "name": "__ZN21InfernoVGPUUserClientnwEm",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3476
+    "value": 3536
   },
   {
-    "idx": 68,
+    "idx": 70,
     "name": "__ZNK16InfernoVGPUHello12getMetaClassEv",
     "type": 15,
     "sect": 1,
@@ -552,7 +568,7 @@
     "value": 512
   },
   {
-    "idx": 69,
+    "idx": 71,
     "name": "__ZNK16InfernoVGPUHello9MetaClass5allocEv",
     "type": 15,
     "sect": 1,
@@ -560,55 +576,55 @@
     "value": 640
   },
   {
-    "idx": 70,
+    "idx": 72,
     "name": "__ZNK21InfernoVGPUUserClient12getMetaClassEv",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3296
+    "value": 3356
   },
   {
-    "idx": 71,
+    "idx": 73,
     "name": "__ZNK21InfernoVGPUUserClient9MetaClass5allocEv",
     "type": 15,
     "sect": 1,
     "desc": 0,
-    "value": 3424
+    "value": 3484
   },
   {
-    "idx": 72,
+    "idx": 74,
     "name": "__ZTV16InfernoVGPUHello",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 7464
+    "value": 7824
   },
   {
-    "idx": 73,
+    "idx": 75,
     "name": "__ZTV21InfernoVGPUUserClient",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 9944
+    "value": 10304
   },
   {
-    "idx": 74,
+    "idx": 76,
     "name": "__ZTVN16InfernoVGPUHello9MetaClassE",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 9664
+    "value": 10024
   },
   {
-    "idx": 75,
+    "idx": 77,
     "name": "__ZTVN21InfernoVGPUUserClient9MetaClassE",
     "type": 15,
     "sect": 3,
     "desc": 0,
-    "value": 12416
+    "value": 12776
   },
   {
-    "idx": 76,
+    "idx": 78,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass0Ev",
     "type": 1,
     "sect": 0,
@@ -616,7 +632,7 @@
     "value": 0
   },
   {
-    "idx": 77,
+    "idx": 79,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass1Ev",
     "type": 1,
     "sect": 0,
@@ -624,7 +640,7 @@
     "value": 0
   },
   {
-    "idx": 78,
+    "idx": 80,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass2Ev",
     "type": 1,
     "sect": 0,
@@ -632,7 +648,7 @@
     "value": 0
   },
   {
-    "idx": 79,
+    "idx": 81,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass3Ev",
     "type": 1,
     "sect": 0,
@@ -640,7 +656,7 @@
     "value": 0
   },
   {
-    "idx": 80,
+    "idx": 82,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass4Ev",
     "type": 1,
     "sect": 0,
@@ -648,7 +664,7 @@
     "value": 0
   },
   {
-    "idx": 81,
+    "idx": 83,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass5Ev",
     "type": 1,
     "sect": 0,
@@ -656,7 +672,7 @@
     "value": 0
   },
   {
-    "idx": 82,
+    "idx": 84,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass6Ev",
     "type": 1,
     "sect": 0,
@@ -664,7 +680,7 @@
     "value": 0
   },
   {
-    "idx": 83,
+    "idx": 85,
     "name": "__ZN11OSMetaClass21_RESERVEDOSMetaClass7Ev",
     "type": 1,
     "sect": 0,
@@ -672,7 +688,7 @@
     "value": 0
   },
   {
-    "idx": 84,
+    "idx": 86,
     "name": "__ZN11OSMetaClassC2EPKcPKS_j",
     "type": 1,
     "sect": 0,
@@ -680,7 +696,7 @@
     "value": 0
   },
   {
-    "idx": 85,
+    "idx": 87,
     "name": "__ZN11OSMetaClassD2Ev",
     "type": 1,
     "sect": 0,
@@ -688,7 +704,7 @@
     "value": 0
   },
   {
-    "idx": 86,
+    "idx": 88,
     "name": "__ZN12IOUserClient10clientDiedEv",
     "type": 1,
     "sect": 0,
@@ -696,7 +712,7 @@
     "value": 0
   },
   {
-    "idx": 87,
+    "idx": 89,
     "name": "__ZN12IOUserClient10gMetaClassE",
     "type": 1,
     "sect": 0,
@@ -704,7 +720,7 @@
     "value": 0
   },
   {
-    "idx": 88,
+    "idx": 90,
     "name": "__ZN12IOUserClient10getServiceEv",
     "type": 1,
     "sect": 0,
@@ -712,7 +728,7 @@
     "value": 0
   },
   {
-    "idx": 89,
+    "idx": 91,
     "name": "__ZN12IOUserClient12initWithTaskEP4taskPvj",
     "type": 1,
     "sect": 0,
@@ -720,7 +736,7 @@
     "value": 0
   },
   {
-    "idx": 90,
+    "idx": 92,
     "name": "__ZN12IOUserClient13connectClientEPS_",
     "type": 1,
     "sect": 0,
@@ -728,7 +744,7 @@
     "value": 0
   },
   {
-    "idx": 91,
+    "idx": 93,
     "name": "__ZN12IOUserClient19clientMemoryForTypeEjPjPP18IOMemoryDescriptor",
     "type": 1,
     "sect": 0,
@@ -736,7 +752,7 @@
     "value": 0
   },
   {
-    "idx": 92,
+    "idx": 94,
     "name": "__ZN12IOUserClient20exportObjectToClientEP4taskP8OSObjectPS3_",
     "type": 1,
     "sect": 0,
@@ -744,7 +760,7 @@
     "value": 0
   },
   {
-    "idx": 93,
+    "idx": 95,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient0Ev",
     "type": 1,
     "sect": 0,
@@ -752,7 +768,7 @@
     "value": 0
   },
   {
-    "idx": 94,
+    "idx": 96,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient1Ev",
     "type": 1,
     "sect": 0,
@@ -760,7 +776,7 @@
     "value": 0
   },
   {
-    "idx": 95,
+    "idx": 97,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient2Ev",
     "type": 1,
     "sect": 0,
@@ -768,7 +784,7 @@
     "value": 0
   },
   {
-    "idx": 96,
+    "idx": 98,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient3Ev",
     "type": 1,
     "sect": 0,
@@ -776,7 +792,7 @@
     "value": 0
   },
   {
-    "idx": 97,
+    "idx": 99,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient4Ev",
     "type": 1,
     "sect": 0,
@@ -784,7 +800,7 @@
     "value": 0
   },
   {
-    "idx": 98,
+    "idx": 100,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient5Ev",
     "type": 1,
     "sect": 0,
@@ -792,7 +808,7 @@
     "value": 0
   },
   {
-    "idx": 99,
+    "idx": 101,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient6Ev",
     "type": 1,
     "sect": 0,
@@ -800,7 +816,7 @@
     "value": 0
   },
   {
-    "idx": 100,
+    "idx": 102,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient7Ev",
     "type": 1,
     "sect": 0,
@@ -808,7 +824,7 @@
     "value": 0
   },
   {
-    "idx": 101,
+    "idx": 103,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient8Ev",
     "type": 1,
     "sect": 0,
@@ -816,7 +832,7 @@
     "value": 0
   },
   {
-    "idx": 102,
+    "idx": 104,
     "name": "__ZN12IOUserClient22_RESERVEDIOUserClient9Ev",
     "type": 1,
     "sect": 0,
@@ -824,7 +840,7 @@
     "value": 0
   },
   {
-    "idx": 103,
+    "idx": 105,
     "name": "__ZN12IOUserClient23_RESERVEDIOUserClient10Ev",
     "type": 1,
     "sect": 0,
@@ -832,7 +848,7 @@
     "value": 0
   },
   {
-    "idx": 104,
+    "idx": 106,
     "name": "__ZN12IOUserClient23_RESERVEDIOUserClient11Ev",
     "type": 1,
     "sect": 0,
@@ -840,7 +856,7 @@
     "value": 0
   },
   {
-    "idx": 105,
+    "idx": 107,
     "name": "__ZN12IOUserClient23_RESERVEDIOUserClient12Ev",
     "type": 1,
     "sect": 0,
@@ -848,7 +864,7 @@
     "value": 0
   },
   {
-    "idx": 106,
+    "idx": 108,
     "name": "__ZN12IOUserClient23_RESERVEDIOUserClient13Ev",
     "type": 1,
     "sect": 0,
@@ -856,7 +872,7 @@
     "value": 0
   },
   {
-    "idx": 107,
+    "idx": 109,
     "name": "__ZN12IOUserClient23_RESERVEDIOUserClient14Ev",
     "type": 1,
     "sect": 0,
@@ -864,7 +880,7 @@
     "value": 0
   },
   {
-    "idx": 108,
+    "idx": 110,
     "name": "__ZN12IOUserClient23_RESERVEDIOUserClient15Ev",
     "type": 1,
     "sect": 0,
@@ -872,7 +888,7 @@
     "value": 0
   },
   {
-    "idx": 109,
+    "idx": 111,
     "name": "__ZN12IOUserClient23getExternalTrapForIndexEj",
     "type": 1,
     "sect": 0,
@@ -880,7 +896,7 @@
     "value": 0
   },
   {
-    "idx": 110,
+    "idx": 112,
     "name": "__ZN12IOUserClient24getNotificationSemaphoreEjPP9semaphore",
     "type": 1,
     "sect": 0,
@@ -888,7 +904,7 @@
     "value": 0
   },
   {
-    "idx": 111,
+    "idx": 113,
     "name": "__ZN12IOUserClient24getTargetAndTrapForIndexEPP9IOServicej",
     "type": 1,
     "sect": 0,
@@ -896,7 +912,7 @@
     "value": 0
   },
   {
-    "idx": 112,
+    "idx": 114,
     "name": "__ZN12IOUserClient24registerNotificationPortEP8ipc_portjj",
     "type": 1,
     "sect": 0,
@@ -904,7 +920,7 @@
     "value": 0
   },
   {
-    "idx": 113,
+    "idx": 115,
     "name": "__ZN12IOUserClient24registerNotificationPortEP8ipc_portjy",
     "type": 1,
     "sect": 0,
@@ -912,7 +928,7 @@
     "value": 0
   },
   {
-    "idx": 114,
+    "idx": 116,
     "name": "__ZN12IOUserClient25getExternalMethodForIndexEj",
     "type": 1,
     "sect": 0,
@@ -920,7 +936,7 @@
     "value": 0
   },
   {
-    "idx": 115,
+    "idx": 117,
     "name": "__ZN12IOUserClient26getTargetAndMethodForIndexEPP9IOServicej",
     "type": 1,
     "sect": 0,
@@ -928,7 +944,7 @@
     "value": 0
   },
   {
-    "idx": 116,
+    "idx": 118,
     "name": "__ZN12IOUserClient30getExternalAsyncMethodForIndexEj",
     "type": 1,
     "sect": 0,
@@ -936,7 +952,7 @@
     "value": 0
   },
   {
-    "idx": 117,
+    "idx": 119,
     "name": "__ZN12IOUserClient31getAsyncTargetAndMethodForIndexEPP9IOServicej",
     "type": 1,
     "sect": 0,
@@ -944,7 +960,7 @@
     "value": 0
   },
   {
-    "idx": 118,
+    "idx": 120,
     "name": "__ZN12IOUserClient4freeEv",
     "type": 1,
     "sect": 0,
@@ -952,7 +968,7 @@
     "value": 0
   },
   {
-    "idx": 119,
+    "idx": 121,
     "name": "__ZN12IOUserClient4initEP12OSDictionary",
     "type": 1,
     "sect": 0,
@@ -960,7 +976,7 @@
     "value": 0
   },
   {
-    "idx": 120,
+    "idx": 122,
     "name": "__ZN12IOUserClient4initEv",
     "type": 1,
     "sect": 0,
@@ -968,7 +984,7 @@
     "value": 0
   },
   {
-    "idx": 121,
+    "idx": 123,
     "name": "__ZN12IOUserClient8DispatchE5IORPC",
     "type": 1,
     "sect": 0,
@@ -976,7 +992,7 @@
     "value": 0
   },
   {
-    "idx": 122,
+    "idx": 124,
     "name": "__ZN12IOUserClientC2EPK11OSMetaClass",
     "type": 1,
     "sect": 0,
@@ -984,7 +1000,7 @@
     "value": 0
   },
   {
-    "idx": 123,
+    "idx": 125,
     "name": "__ZN12IOUserClientD2Ev",
     "type": 1,
     "sect": 0,
@@ -992,7 +1008,7 @@
     "value": 0
   },
   {
-    "idx": 124,
+    "idx": 126,
     "name": "__ZN15IORegistryEntry11detachAboveEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1000,7 +1016,7 @@
     "value": 0
   },
   {
-    "idx": 125,
+    "idx": 127,
     "name": "__ZN15IORegistryEntry11setLocationEPK8OSSymbolPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1008,7 +1024,7 @@
     "value": 0
   },
   {
-    "idx": 126,
+    "idx": 128,
     "name": "__ZN15IORegistryEntry11setLocationEPKcPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1016,7 +1032,7 @@
     "value": 0
   },
   {
-    "idx": 127,
+    "idx": 129,
     "name": "__ZN15IORegistryEntry11setPropertyEPK8OSStringP8OSObject",
     "type": 1,
     "sect": 0,
@@ -1024,7 +1040,7 @@
     "value": 0
   },
   {
-    "idx": 128,
+    "idx": 130,
     "name": "__ZN15IORegistryEntry11setPropertyEPK8OSSymbolP8OSObject",
     "type": 1,
     "sect": 0,
@@ -1032,7 +1048,7 @@
     "value": 0
   },
   {
-    "idx": 129,
+    "idx": 131,
     "name": "__ZN15IORegistryEntry11setPropertyEPKcP8OSObject",
     "type": 1,
     "sect": 0,
@@ -1040,7 +1056,7 @@
     "value": 0
   },
   {
-    "idx": 130,
+    "idx": 132,
     "name": "__ZN15IORegistryEntry11setPropertyEPKcPvj",
     "type": 1,
     "sect": 0,
@@ -1048,7 +1064,7 @@
     "value": 0
   },
   {
-    "idx": 131,
+    "idx": 133,
     "name": "__ZN15IORegistryEntry11setPropertyEPKcS1_",
     "type": 1,
     "sect": 0,
@@ -1056,7 +1072,7 @@
     "value": 0
   },
   {
-    "idx": 132,
+    "idx": 134,
     "name": "__ZN15IORegistryEntry11setPropertyEPKcb",
     "type": 1,
     "sect": 0,
@@ -1064,7 +1080,7 @@
     "value": 0
   },
   {
-    "idx": 133,
+    "idx": 135,
     "name": "__ZN15IORegistryEntry11setPropertyEPKcyj",
     "type": 1,
     "sect": 0,
@@ -1072,7 +1088,7 @@
     "value": 0
   },
   {
-    "idx": 134,
+    "idx": 136,
     "name": "__ZN15IORegistryEntry13attachToChildEPS_PK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1080,7 +1096,7 @@
     "value": 0
   },
   {
-    "idx": 135,
+    "idx": 137,
     "name": "__ZN15IORegistryEntry13childFromPathEPKcPK15IORegistryPlanePcPi",
     "type": 1,
     "sect": 0,
@@ -1088,7 +1104,7 @@
     "value": 0
   },
   {
-    "idx": 136,
+    "idx": 138,
     "name": "__ZN15IORegistryEntry13setPropertiesEP8OSObject",
     "type": 1,
     "sect": 0,
@@ -1096,7 +1112,7 @@
     "value": 0
   },
   {
-    "idx": 137,
+    "idx": 139,
     "name": "__ZN15IORegistryEntry14attachToParentEPS_PK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1104,7 +1120,7 @@
     "value": 0
   },
   {
-    "idx": 138,
+    "idx": 140,
     "name": "__ZN15IORegistryEntry14removePropertyEPK8OSString",
     "type": 1,
     "sect": 0,
@@ -1112,7 +1128,7 @@
     "value": 0
   },
   {
-    "idx": 139,
+    "idx": 141,
     "name": "__ZN15IORegistryEntry14removePropertyEPK8OSSymbol",
     "type": 1,
     "sect": 0,
@@ -1120,7 +1136,7 @@
     "value": 0
   },
   {
-    "idx": 140,
+    "idx": 142,
     "name": "__ZN15IORegistryEntry14removePropertyEPKc",
     "type": 1,
     "sect": 0,
@@ -1128,7 +1144,7 @@
     "value": 0
   },
   {
-    "idx": 141,
+    "idx": 143,
     "name": "__ZN15IORegistryEntry15detachFromChildEPS_PK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1136,7 +1152,7 @@
     "value": 0
   },
   {
-    "idx": 142,
+    "idx": 144,
     "name": "__ZN15IORegistryEntry16detachFromParentEPS_PK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1144,7 +1160,7 @@
     "value": 0
   },
   {
-    "idx": 143,
+    "idx": 145,
     "name": "__ZN15IORegistryEntry16setPropertyTableEP12OSDictionary",
     "type": 1,
     "sect": 0,
@@ -1152,7 +1168,7 @@
     "value": 0
   },
   {
-    "idx": 144,
+    "idx": 146,
     "name": "__ZN15IORegistryEntry17runPropertyActionEPFiP8OSObjectPvS2_S2_S2_ES1_S2_S2_S2_S2_",
     "type": 1,
     "sect": 0,
@@ -1160,7 +1176,7 @@
     "value": 0
   },
   {
-    "idx": 145,
+    "idx": 147,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry0Ev",
     "type": 1,
     "sect": 0,
@@ -1168,7 +1184,7 @@
     "value": 0
   },
   {
-    "idx": 146,
+    "idx": 148,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry1Ev",
     "type": 1,
     "sect": 0,
@@ -1176,7 +1192,7 @@
     "value": 0
   },
   {
-    "idx": 147,
+    "idx": 149,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry2Ev",
     "type": 1,
     "sect": 0,
@@ -1184,7 +1200,7 @@
     "value": 0
   },
   {
-    "idx": 148,
+    "idx": 150,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry3Ev",
     "type": 1,
     "sect": 0,
@@ -1192,7 +1208,7 @@
     "value": 0
   },
   {
-    "idx": 149,
+    "idx": 151,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry4Ev",
     "type": 1,
     "sect": 0,
@@ -1200,7 +1216,7 @@
     "value": 0
   },
   {
-    "idx": 150,
+    "idx": 152,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry5Ev",
     "type": 1,
     "sect": 0,
@@ -1208,7 +1224,7 @@
     "value": 0
   },
   {
-    "idx": 151,
+    "idx": 153,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry6Ev",
     "type": 1,
     "sect": 0,
@@ -1216,7 +1232,7 @@
     "value": 0
   },
   {
-    "idx": 152,
+    "idx": 154,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry7Ev",
     "type": 1,
     "sect": 0,
@@ -1224,7 +1240,7 @@
     "value": 0
   },
   {
-    "idx": 153,
+    "idx": 155,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry8Ev",
     "type": 1,
     "sect": 0,
@@ -1232,7 +1248,7 @@
     "value": 0
   },
   {
-    "idx": 154,
+    "idx": 156,
     "name": "__ZN15IORegistryEntry25_RESERVEDIORegistryEntry9Ev",
     "type": 1,
     "sect": 0,
@@ -1240,7 +1256,7 @@
     "value": 0
   },
   {
-    "idx": 155,
+    "idx": 157,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry10Ev",
     "type": 1,
     "sect": 0,
@@ -1248,7 +1264,7 @@
     "value": 0
   },
   {
-    "idx": 156,
+    "idx": 158,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry11Ev",
     "type": 1,
     "sect": 0,
@@ -1256,7 +1272,7 @@
     "value": 0
   },
   {
-    "idx": 157,
+    "idx": 159,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry12Ev",
     "type": 1,
     "sect": 0,
@@ -1264,7 +1280,7 @@
     "value": 0
   },
   {
-    "idx": 158,
+    "idx": 160,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry13Ev",
     "type": 1,
     "sect": 0,
@@ -1272,7 +1288,7 @@
     "value": 0
   },
   {
-    "idx": 159,
+    "idx": 161,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry14Ev",
     "type": 1,
     "sect": 0,
@@ -1280,7 +1296,7 @@
     "value": 0
   },
   {
-    "idx": 160,
+    "idx": 162,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry15Ev",
     "type": 1,
     "sect": 0,
@@ -1288,7 +1304,7 @@
     "value": 0
   },
   {
-    "idx": 161,
+    "idx": 163,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry16Ev",
     "type": 1,
     "sect": 0,
@@ -1296,7 +1312,7 @@
     "value": 0
   },
   {
-    "idx": 162,
+    "idx": 164,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry17Ev",
     "type": 1,
     "sect": 0,
@@ -1304,7 +1320,7 @@
     "value": 0
   },
   {
-    "idx": 163,
+    "idx": 165,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry18Ev",
     "type": 1,
     "sect": 0,
@@ -1312,7 +1328,7 @@
     "value": 0
   },
   {
-    "idx": 164,
+    "idx": 166,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry19Ev",
     "type": 1,
     "sect": 0,
@@ -1320,7 +1336,7 @@
     "value": 0
   },
   {
-    "idx": 165,
+    "idx": 167,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry20Ev",
     "type": 1,
     "sect": 0,
@@ -1328,7 +1344,7 @@
     "value": 0
   },
   {
-    "idx": 166,
+    "idx": 168,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry21Ev",
     "type": 1,
     "sect": 0,
@@ -1336,7 +1352,7 @@
     "value": 0
   },
   {
-    "idx": 167,
+    "idx": 169,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry22Ev",
     "type": 1,
     "sect": 0,
@@ -1344,7 +1360,7 @@
     "value": 0
   },
   {
-    "idx": 168,
+    "idx": 170,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry23Ev",
     "type": 1,
     "sect": 0,
@@ -1352,7 +1368,7 @@
     "value": 0
   },
   {
-    "idx": 169,
+    "idx": 171,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry24Ev",
     "type": 1,
     "sect": 0,
@@ -1360,7 +1376,7 @@
     "value": 0
   },
   {
-    "idx": 170,
+    "idx": 172,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry25Ev",
     "type": 1,
     "sect": 0,
@@ -1368,7 +1384,7 @@
     "value": 0
   },
   {
-    "idx": 171,
+    "idx": 173,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry26Ev",
     "type": 1,
     "sect": 0,
@@ -1376,7 +1392,7 @@
     "value": 0
   },
   {
-    "idx": 172,
+    "idx": 174,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry27Ev",
     "type": 1,
     "sect": 0,
@@ -1384,7 +1400,7 @@
     "value": 0
   },
   {
-    "idx": 173,
+    "idx": 175,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry28Ev",
     "type": 1,
     "sect": 0,
@@ -1392,7 +1408,7 @@
     "value": 0
   },
   {
-    "idx": 174,
+    "idx": 176,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry29Ev",
     "type": 1,
     "sect": 0,
@@ -1400,7 +1416,7 @@
     "value": 0
   },
   {
-    "idx": 175,
+    "idx": 177,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry30Ev",
     "type": 1,
     "sect": 0,
@@ -1408,7 +1424,7 @@
     "value": 0
   },
   {
-    "idx": 176,
+    "idx": 178,
     "name": "__ZN15IORegistryEntry26_RESERVEDIORegistryEntry31Ev",
     "type": 1,
     "sect": 0,
@@ -1416,7 +1432,7 @@
     "value": 0
   },
   {
-    "idx": 177,
+    "idx": 179,
     "name": "__ZN15IORegistryEntry7setNameEPK8OSSymbolPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1424,7 +1440,7 @@
     "value": 0
   },
   {
-    "idx": 178,
+    "idx": 180,
     "name": "__ZN15IORegistryEntry7setNameEPKcPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1432,7 +1448,7 @@
     "value": 0
   },
   {
-    "idx": 179,
+    "idx": 181,
     "name": "__ZN15IORegistryEntry9detachAllEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -1440,7 +1456,7 @@
     "value": 0
   },
   {
-    "idx": 180,
+    "idx": 182,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase0Ev",
     "type": 1,
     "sect": 0,
@@ -1448,7 +1464,7 @@
     "value": 0
   },
   {
-    "idx": 181,
+    "idx": 183,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase1Ev",
     "type": 1,
     "sect": 0,
@@ -1456,7 +1472,7 @@
     "value": 0
   },
   {
-    "idx": 182,
+    "idx": 184,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase2Ev",
     "type": 1,
     "sect": 0,
@@ -1464,7 +1480,7 @@
     "value": 0
   },
   {
-    "idx": 183,
+    "idx": 185,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase3Ev",
     "type": 1,
     "sect": 0,
@@ -1472,7 +1488,7 @@
     "value": 0
   },
   {
-    "idx": 184,
+    "idx": 186,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase4Ev",
     "type": 1,
     "sect": 0,
@@ -1480,7 +1496,7 @@
     "value": 0
   },
   {
-    "idx": 185,
+    "idx": 187,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase5Ev",
     "type": 1,
     "sect": 0,
@@ -1488,7 +1504,7 @@
     "value": 0
   },
   {
-    "idx": 186,
+    "idx": 188,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase6Ev",
     "type": 1,
     "sect": 0,
@@ -1496,7 +1512,7 @@
     "value": 0
   },
   {
-    "idx": 187,
+    "idx": 189,
     "name": "__ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase7Ev",
     "type": 1,
     "sect": 0,
@@ -1504,7 +1520,7 @@
     "value": 0
   },
   {
-    "idx": 188,
+    "idx": 190,
     "name": "__ZN15OSMetaClassBase8DispatchE5IORPC",
     "type": 1,
     "sect": 0,
@@ -1512,7 +1528,7 @@
     "value": 0
   },
   {
-    "idx": 189,
+    "idx": 191,
     "name": "__ZN18IOMemoryDescriptor19withPhysicalAddressEyyj",
     "type": 1,
     "sect": 0,
@@ -1520,7 +1536,7 @@
     "value": 0
   },
   {
-    "idx": 190,
+    "idx": 192,
     "name": "__ZN8OSObject18_RESERVEDOSObject0Ev",
     "type": 1,
     "sect": 0,
@@ -1528,7 +1544,7 @@
     "value": 0
   },
   {
-    "idx": 191,
+    "idx": 193,
     "name": "__ZN8OSObject18_RESERVEDOSObject1Ev",
     "type": 1,
     "sect": 0,
@@ -1536,7 +1552,7 @@
     "value": 0
   },
   {
-    "idx": 192,
+    "idx": 194,
     "name": "__ZN8OSObject18_RESERVEDOSObject2Ev",
     "type": 1,
     "sect": 0,
@@ -1544,7 +1560,7 @@
     "value": 0
   },
   {
-    "idx": 193,
+    "idx": 195,
     "name": "__ZN8OSObject18_RESERVEDOSObject3Ev",
     "type": 1,
     "sect": 0,
@@ -1552,7 +1568,7 @@
     "value": 0
   },
   {
-    "idx": 194,
+    "idx": 196,
     "name": "__ZN8OSObject18_RESERVEDOSObject4Ev",
     "type": 1,
     "sect": 0,
@@ -1560,7 +1576,7 @@
     "value": 0
   },
   {
-    "idx": 195,
+    "idx": 197,
     "name": "__ZN8OSObject18_RESERVEDOSObject5Ev",
     "type": 1,
     "sect": 0,
@@ -1568,7 +1584,7 @@
     "value": 0
   },
   {
-    "idx": 196,
+    "idx": 198,
     "name": "__ZN8OSObject18_RESERVEDOSObject6Ev",
     "type": 1,
     "sect": 0,
@@ -1576,7 +1592,7 @@
     "value": 0
   },
   {
-    "idx": 197,
+    "idx": 199,
     "name": "__ZN8OSObject18_RESERVEDOSObject7Ev",
     "type": 1,
     "sect": 0,
@@ -1584,7 +1600,7 @@
     "value": 0
   },
   {
-    "idx": 198,
+    "idx": 200,
     "name": "__ZN8OSObject18_RESERVEDOSObject8Ev",
     "type": 1,
     "sect": 0,
@@ -1592,7 +1608,7 @@
     "value": 0
   },
   {
-    "idx": 199,
+    "idx": 201,
     "name": "__ZN8OSObject18_RESERVEDOSObject9Ev",
     "type": 1,
     "sect": 0,
@@ -1600,7 +1616,7 @@
     "value": 0
   },
   {
-    "idx": 200,
+    "idx": 202,
     "name": "__ZN8OSObject19_RESERVEDOSObject10Ev",
     "type": 1,
     "sect": 0,
@@ -1608,7 +1624,7 @@
     "value": 0
   },
   {
-    "idx": 201,
+    "idx": 203,
     "name": "__ZN8OSObject19_RESERVEDOSObject11Ev",
     "type": 1,
     "sect": 0,
@@ -1616,7 +1632,7 @@
     "value": 0
   },
   {
-    "idx": 202,
+    "idx": 204,
     "name": "__ZN8OSObject19_RESERVEDOSObject12Ev",
     "type": 1,
     "sect": 0,
@@ -1624,7 +1640,7 @@
     "value": 0
   },
   {
-    "idx": 203,
+    "idx": 205,
     "name": "__ZN8OSObject19_RESERVEDOSObject13Ev",
     "type": 1,
     "sect": 0,
@@ -1632,7 +1648,7 @@
     "value": 0
   },
   {
-    "idx": 204,
+    "idx": 206,
     "name": "__ZN8OSObject19_RESERVEDOSObject14Ev",
     "type": 1,
     "sect": 0,
@@ -1640,7 +1656,7 @@
     "value": 0
   },
   {
-    "idx": 205,
+    "idx": 207,
     "name": "__ZN8OSObject19_RESERVEDOSObject15Ev",
     "type": 1,
     "sect": 0,
@@ -1648,7 +1664,7 @@
     "value": 0
   },
   {
-    "idx": 206,
+    "idx": 208,
     "name": "__ZN8OSObject4initEv",
     "type": 1,
     "sect": 0,
@@ -1656,7 +1672,7 @@
     "value": 0
   },
   {
-    "idx": 207,
+    "idx": 209,
     "name": "__ZN8OSObjectdlEPvm",
     "type": 1,
     "sect": 0,
@@ -1664,7 +1680,7 @@
     "value": 0
   },
   {
-    "idx": 208,
+    "idx": 210,
     "name": "__ZN8OSObjectnwEm",
     "type": 1,
     "sect": 0,
@@ -1672,7 +1688,7 @@
     "value": 0
   },
   {
-    "idx": 209,
+    "idx": 211,
     "name": "__ZN9IOService10adjustBusyEi",
     "type": 1,
     "sect": 0,
@@ -1680,7 +1696,7 @@
     "value": 0
   },
   {
-    "idx": 210,
+    "idx": 212,
     "name": "__ZN9IOService10gMetaClassE",
     "type": 1,
     "sect": 0,
@@ -1688,7 +1704,7 @@
     "value": 0
   },
   {
-    "idx": 211,
+    "idx": 213,
     "name": "__ZN9IOService10handleOpenEPS_jPv",
     "type": 1,
     "sect": 0,
@@ -1696,7 +1712,7 @@
     "value": 0
   },
   {
-    "idx": 212,
+    "idx": 214,
     "name": "__ZN9IOService10joinPMtreeEPS_",
     "type": 1,
     "sect": 0,
@@ -1704,7 +1720,7 @@
     "value": 0
   },
   {
-    "idx": 213,
+    "idx": 215,
     "name": "__ZN9IOService11handleCloseEPS_j",
     "type": 1,
     "sect": 0,
@@ -1712,7 +1728,7 @@
     "value": 0
   },
   {
-    "idx": 214,
+    "idx": 216,
     "name": "__ZN9IOService12didTerminateEPS_jPb",
     "type": 1,
     "sect": 0,
@@ -1720,7 +1736,7 @@
     "value": 0
   },
   {
-    "idx": 215,
+    "idx": 217,
     "name": "__ZN9IOService12getBusyStateEv",
     "type": 1,
     "sect": 0,
@@ -1728,7 +1744,7 @@
     "value": 0
   },
   {
-    "idx": 216,
+    "idx": 218,
     "name": "__ZN9IOService12getResourcesEv",
     "type": 1,
     "sect": 0,
@@ -1736,7 +1752,7 @@
     "value": 0
   },
   {
-    "idx": 217,
+    "idx": 219,
     "name": "__ZN9IOService12requestProbeEj",
     "type": 1,
     "sect": 0,
@@ -1744,7 +1760,7 @@
     "value": 0
   },
   {
-    "idx": 218,
+    "idx": 220,
     "name": "__ZN9IOService12tellChangeUpEm",
     "type": 1,
     "sect": 0,
@@ -1752,7 +1768,7 @@
     "value": 0
   },
   {
-    "idx": 219,
+    "idx": 221,
     "name": "__ZN9IOService12updateReportEP19IOReportChannelListjPvS2_",
     "type": 1,
     "sect": 0,
@@ -1760,7 +1776,7 @@
     "value": 0
   },
   {
-    "idx": 220,
+    "idx": 222,
     "name": "__ZN9IOService13addPowerChildEPS_",
     "type": 1,
     "sect": 0,
@@ -1768,7 +1784,7 @@
     "value": 0
   },
   {
-    "idx": 221,
+    "idx": 223,
     "name": "__ZN9IOService13askChangeDownEm",
     "type": 1,
     "sect": 0,
@@ -1776,7 +1792,7 @@
     "value": 0
   },
   {
-    "idx": 222,
+    "idx": 224,
     "name": "__ZN9IOService13matchLocationEPS_",
     "type": 1,
     "sect": 0,
@@ -1784,7 +1800,7 @@
     "value": 0
   },
   {
-    "idx": 223,
+    "idx": 225,
     "name": "__ZN9IOService13messageClientEjP8OSObjectPvm",
     "type": 1,
     "sect": 0,
@@ -1792,7 +1808,7 @@
     "value": 0
   },
   {
-    "idx": 224,
+    "idx": 226,
     "name": "__ZN9IOService13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient",
     "type": 1,
     "sect": 0,
@@ -1800,7 +1816,7 @@
     "value": 0
   },
   {
-    "idx": 225,
+    "idx": 227,
     "name": "__ZN9IOService13newUserClientEP4taskPvjPP12IOUserClient",
     "type": 1,
     "sect": 0,
@@ -1808,7 +1824,7 @@
     "value": 0
   },
   {
-    "idx": 226,
+    "idx": 228,
     "name": "__ZN9IOService13setPowerStateEmPS_",
     "type": 1,
     "sect": 0,
@@ -1816,7 +1832,7 @@
     "value": 0
   },
   {
-    "idx": 227,
+    "idx": 229,
     "name": "__ZN9IOService13willTerminateEPS_j",
     "type": 1,
     "sect": 0,
@@ -1824,7 +1840,7 @@
     "value": 0
   },
   {
-    "idx": 228,
+    "idx": 230,
     "name": "__ZN9IOService14activityTickleEmm",
     "type": 1,
     "sect": 0,
@@ -1832,7 +1848,7 @@
     "value": 0
   },
   {
-    "idx": 229,
+    "idx": 231,
     "name": "__ZN9IOService14applyToClientsEPFvPS_PvES1_",
     "type": 1,
     "sect": 0,
@@ -1840,7 +1856,7 @@
     "value": 0
   },
   {
-    "idx": 230,
+    "idx": 232,
     "name": "__ZN9IOService14causeInterruptEi",
     "type": 1,
     "sect": 0,
@@ -1848,7 +1864,7 @@
     "value": 0
   },
   {
-    "idx": 231,
+    "idx": 233,
     "name": "__ZN9IOService14messageClientsEjPvm",
     "type": 1,
     "sect": 0,
@@ -1856,7 +1872,7 @@
     "value": 0
   },
   {
-    "idx": 232,
+    "idx": 234,
     "name": "__ZN9IOService14tellChangeDownEm",
     "type": 1,
     "sect": 0,
@@ -1864,7 +1880,7 @@
     "value": 0
   },
   {
-    "idx": 233,
+    "idx": 235,
     "name": "__ZN9IOService15comparePropertyEP12OSDictionaryPK8OSString",
     "type": 1,
     "sect": 0,
@@ -1872,7 +1888,7 @@
     "value": 0
   },
   {
-    "idx": 234,
+    "idx": 236,
     "name": "__ZN9IOService15comparePropertyEP12OSDictionaryPKc",
     "type": 1,
     "sect": 0,
@@ -1880,7 +1896,7 @@
     "value": 0
   },
   {
-    "idx": 235,
+    "idx": 237,
     "name": "__ZN9IOService15configureReportEP19IOReportChannelListjPvS2_",
     "type": 1,
     "sect": 0,
@@ -1888,7 +1904,7 @@
     "value": 0
   },
   {
-    "idx": 236,
+    "idx": 238,
     "name": "__ZN9IOService15enableInterruptEi",
     "type": 1,
     "sect": 0,
@@ -1896,7 +1912,7 @@
     "value": 0
   },
   {
-    "idx": 237,
+    "idx": 239,
     "name": "__ZN9IOService15errnoFromReturnEi",
     "type": 1,
     "sect": 0,
@@ -1904,7 +1920,7 @@
     "value": 0
   },
   {
-    "idx": 238,
+    "idx": 240,
     "name": "__ZN9IOService15getDeviceMemoryEv",
     "type": 1,
     "sect": 0,
@@ -1912,7 +1928,7 @@
     "value": 0
   },
   {
-    "idx": 239,
+    "idx": 241,
     "name": "__ZN9IOService15nextIdleTimeoutEyyj",
     "type": 1,
     "sect": 0,
@@ -1920,7 +1936,7 @@
     "value": 0
   },
   {
-    "idx": 240,
+    "idx": 242,
     "name": "__ZN9IOService15powerChangeDoneEm",
     "type": 1,
     "sect": 0,
@@ -1928,7 +1944,7 @@
     "value": 0
   },
   {
-    "idx": 241,
+    "idx": 243,
     "name": "__ZN9IOService15registerServiceEj",
     "type": 1,
     "sect": 0,
@@ -1936,7 +1952,7 @@
     "value": 0
   },
   {
-    "idx": 242,
+    "idx": 244,
     "name": "__ZN9IOService15setDeviceMemoryEP7OSArray",
     "type": 1,
     "sect": 0,
@@ -1944,7 +1960,7 @@
     "value": 0
   },
   {
-    "idx": 243,
+    "idx": 245,
     "name": "__ZN9IOService15terminateClientEPS_j",
     "type": 1,
     "sect": 0,
@@ -1952,7 +1968,7 @@
     "value": 0
   },
   {
-    "idx": 244,
+    "idx": 246,
     "name": "__ZN9IOService16allowPowerChangeEm",
     "type": 1,
     "sect": 0,
@@ -1960,7 +1976,7 @@
     "value": 0
   },
   {
-    "idx": 245,
+    "idx": 247,
     "name": "__ZN9IOService16applyToProvidersEPFvPS_PvES1_",
     "type": 1,
     "sect": 0,
@@ -1968,7 +1984,7 @@
     "value": 0
   },
   {
-    "idx": 246,
+    "idx": 248,
     "name": "__ZN9IOService16disableInterruptEi",
     "type": 1,
     "sect": 0,
@@ -1976,7 +1992,7 @@
     "value": 0
   },
   {
-    "idx": 247,
+    "idx": 249,
     "name": "__ZN9IOService16getInterruptTypeEiPi",
     "type": 1,
     "sect": 0,
@@ -1984,7 +2000,7 @@
     "value": 0
   },
   {
-    "idx": 248,
+    "idx": 250,
     "name": "__ZN9IOService16registerInterestEPK8OSSymbolPFiPvS3_jPS_S3_mES3_S3_",
     "type": 1,
     "sect": 0,
@@ -1992,7 +2008,7 @@
     "value": 0
   },
   {
-    "idx": 249,
+    "idx": 251,
     "name": "__ZN9IOService16removePowerChildEP17IOPowerConnection",
     "type": 1,
     "sect": 0,
@@ -2000,7 +2016,7 @@
     "value": 0
   },
   {
-    "idx": 250,
+    "idx": 252,
     "name": "__ZN9IOService16requestTerminateEPS_j",
     "type": 1,
     "sect": 0,
@@ -2008,7 +2024,7 @@
     "value": 0
   },
   {
-    "idx": 251,
+    "idx": 253,
     "name": "__ZN9IOService16stringFromReturnEi",
     "type": 1,
     "sect": 0,
@@ -2016,7 +2032,7 @@
     "value": 0
   },
   {
-    "idx": 252,
+    "idx": 254,
     "name": "__ZN9IOService16tellNoChangeDownEm",
     "type": 1,
     "sect": 0,
@@ -2024,7 +2040,7 @@
     "value": 0
   },
   {
-    "idx": 253,
+    "idx": 255,
     "name": "__ZN9IOService17addNeededResourceEPKc",
     "type": 1,
     "sect": 0,
@@ -2032,7 +2048,7 @@
     "value": 0
   },
   {
-    "idx": 254,
+    "idx": 256,
     "name": "__ZN9IOService17applyToInterestedEPK8OSSymbolPFvP8OSObjectPvES5_",
     "type": 1,
     "sect": 0,
@@ -2040,7 +2056,7 @@
     "value": 0
   },
   {
-    "idx": 255,
+    "idx": 257,
     "name": "__ZN9IOService17cancelPowerChangeEm",
     "type": 1,
     "sect": 0,
@@ -2048,7 +2064,7 @@
     "value": 0
   },
   {
-    "idx": 256,
+    "idx": 258,
     "name": "__ZN9IOService17comparePropertiesEP12OSDictionaryP12OSCollection",
     "type": 1,
     "sect": 0,
@@ -2056,7 +2072,7 @@
     "value": 0
   },
   {
-    "idx": 257,
+    "idx": 259,
     "name": "__ZN9IOService17getAggressivenessEmPm",
     "type": 1,
     "sect": 0,
@@ -2064,7 +2080,7 @@
     "value": 0
   },
   {
-    "idx": 258,
+    "idx": 260,
     "name": "__ZN9IOService17registerInterruptEiP8OSObjectPFvS1_PvPS_iES2_",
     "type": 1,
     "sect": 0,
@@ -2072,7 +2088,7 @@
     "value": 0
   },
   {
-    "idx": 259,
+    "idx": 261,
     "name": "__ZN9IOService17setAggressivenessEmm",
     "type": 1,
     "sect": 0,
@@ -2080,7 +2096,7 @@
     "value": 0
   },
   {
-    "idx": 260,
+    "idx": 262,
     "name": "__ZN9IOService18lockForArbitrationEb",
     "type": 1,
     "sect": 0,
@@ -2088,7 +2104,7 @@
     "value": 0
   },
   {
-    "idx": 261,
+    "idx": 263,
     "name": "__ZN9IOService18matchPropertyTableEP12OSDictionary",
     "type": 1,
     "sect": 0,
@@ -2096,7 +2112,7 @@
     "value": 0
   },
   {
-    "idx": 262,
+    "idx": 264,
     "name": "__ZN9IOService18matchPropertyTableEP12OSDictionaryPi",
     "type": 1,
     "sect": 0,
@@ -2104,7 +2120,7 @@
     "value": 0
   },
   {
-    "idx": 263,
+    "idx": 265,
     "name": "__ZN9IOService18setIdleTimerPeriodEm",
     "type": 1,
     "sect": 0,
@@ -2112,7 +2128,7 @@
     "value": 0
   },
   {
-    "idx": 264,
+    "idx": 266,
     "name": "__ZN9IOService18systemWillShutdownEj",
     "type": 1,
     "sect": 0,
@@ -2120,7 +2136,7 @@
     "value": 0
   },
   {
-    "idx": 265,
+    "idx": 267,
     "name": "__ZN9IOService19_RESERVEDIOService0Ev",
     "type": 1,
     "sect": 0,
@@ -2128,7 +2144,7 @@
     "value": 0
   },
   {
-    "idx": 266,
+    "idx": 268,
     "name": "__ZN9IOService19_RESERVEDIOService1Ev",
     "type": 1,
     "sect": 0,
@@ -2136,7 +2152,7 @@
     "value": 0
   },
   {
-    "idx": 267,
+    "idx": 269,
     "name": "__ZN9IOService19_RESERVEDIOService2Ev",
     "type": 1,
     "sect": 0,
@@ -2144,7 +2160,7 @@
     "value": 0
   },
   {
-    "idx": 268,
+    "idx": 270,
     "name": "__ZN9IOService19_RESERVEDIOService3Ev",
     "type": 1,
     "sect": 0,
@@ -2152,7 +2168,7 @@
     "value": 0
   },
   {
-    "idx": 269,
+    "idx": 271,
     "name": "__ZN9IOService19_RESERVEDIOService4Ev",
     "type": 1,
     "sect": 0,
@@ -2160,7 +2176,7 @@
     "value": 0
   },
   {
-    "idx": 270,
+    "idx": 272,
     "name": "__ZN9IOService19_RESERVEDIOService5Ev",
     "type": 1,
     "sect": 0,
@@ -2168,7 +2184,7 @@
     "value": 0
   },
   {
-    "idx": 271,
+    "idx": 273,
     "name": "__ZN9IOService19_RESERVEDIOService6Ev",
     "type": 1,
     "sect": 0,
@@ -2176,7 +2192,7 @@
     "value": 0
   },
   {
-    "idx": 272,
+    "idx": 274,
     "name": "__ZN9IOService19_RESERVEDIOService7Ev",
     "type": 1,
     "sect": 0,
@@ -2184,7 +2200,7 @@
     "value": 0
   },
   {
-    "idx": 273,
+    "idx": 275,
     "name": "__ZN9IOService19_RESERVEDIOService8Ev",
     "type": 1,
     "sect": 0,
@@ -2192,7 +2208,7 @@
     "value": 0
   },
   {
-    "idx": 274,
+    "idx": 276,
     "name": "__ZN9IOService19_RESERVEDIOService9Ev",
     "type": 1,
     "sect": 0,
@@ -2200,7 +2216,7 @@
     "value": 0
   },
   {
-    "idx": 275,
+    "idx": 277,
     "name": "__ZN9IOService19registerPowerDriverEPS_P14IOPMPowerStatem",
     "type": 1,
     "sect": 0,
@@ -2208,7 +2224,7 @@
     "value": 0
   },
   {
-    "idx": 276,
+    "idx": 278,
     "name": "__ZN9IOService19unregisterInterruptEi",
     "type": 1,
     "sect": 0,
@@ -2216,7 +2232,7 @@
     "value": 0
   },
   {
-    "idx": 277,
+    "idx": 279,
     "name": "__ZN9IOService20_RESERVEDIOService10Ev",
     "type": 1,
     "sect": 0,
@@ -2224,7 +2240,7 @@
     "value": 0
   },
   {
-    "idx": 278,
+    "idx": 280,
     "name": "__ZN9IOService20_RESERVEDIOService11Ev",
     "type": 1,
     "sect": 0,
@@ -2232,7 +2248,7 @@
     "value": 0
   },
   {
-    "idx": 279,
+    "idx": 281,
     "name": "__ZN9IOService20_RESERVEDIOService12Ev",
     "type": 1,
     "sect": 0,
@@ -2240,7 +2256,7 @@
     "value": 0
   },
   {
-    "idx": 280,
+    "idx": 282,
     "name": "__ZN9IOService20_RESERVEDIOService13Ev",
     "type": 1,
     "sect": 0,
@@ -2248,7 +2264,7 @@
     "value": 0
   },
   {
-    "idx": 281,
+    "idx": 283,
     "name": "__ZN9IOService20_RESERVEDIOService14Ev",
     "type": 1,
     "sect": 0,
@@ -2256,7 +2272,7 @@
     "value": 0
   },
   {
-    "idx": 282,
+    "idx": 284,
     "name": "__ZN9IOService20_RESERVEDIOService15Ev",
     "type": 1,
     "sect": 0,
@@ -2264,7 +2280,7 @@
     "value": 0
   },
   {
-    "idx": 283,
+    "idx": 285,
     "name": "__ZN9IOService20_RESERVEDIOService16Ev",
     "type": 1,
     "sect": 0,
@@ -2272,7 +2288,7 @@
     "value": 0
   },
   {
-    "idx": 284,
+    "idx": 286,
     "name": "__ZN9IOService20_RESERVEDIOService17Ev",
     "type": 1,
     "sect": 0,
@@ -2280,7 +2296,7 @@
     "value": 0
   },
   {
-    "idx": 285,
+    "idx": 287,
     "name": "__ZN9IOService20_RESERVEDIOService18Ev",
     "type": 1,
     "sect": 0,
@@ -2288,7 +2304,7 @@
     "value": 0
   },
   {
-    "idx": 286,
+    "idx": 288,
     "name": "__ZN9IOService20_RESERVEDIOService19Ev",
     "type": 1,
     "sect": 0,
@@ -2296,7 +2312,7 @@
     "value": 0
   },
   {
-    "idx": 287,
+    "idx": 289,
     "name": "__ZN9IOService20_RESERVEDIOService20Ev",
     "type": 1,
     "sect": 0,
@@ -2304,7 +2320,7 @@
     "value": 0
   },
   {
-    "idx": 288,
+    "idx": 290,
     "name": "__ZN9IOService20_RESERVEDIOService21Ev",
     "type": 1,
     "sect": 0,
@@ -2312,7 +2328,7 @@
     "value": 0
   },
   {
-    "idx": 289,
+    "idx": 291,
     "name": "__ZN9IOService20_RESERVEDIOService22Ev",
     "type": 1,
     "sect": 0,
@@ -2320,7 +2336,7 @@
     "value": 0
   },
   {
-    "idx": 290,
+    "idx": 292,
     "name": "__ZN9IOService20_RESERVEDIOService23Ev",
     "type": 1,
     "sect": 0,
@@ -2328,7 +2344,7 @@
     "value": 0
   },
   {
-    "idx": 291,
+    "idx": 293,
     "name": "__ZN9IOService20_RESERVEDIOService24Ev",
     "type": 1,
     "sect": 0,
@@ -2336,7 +2352,7 @@
     "value": 0
   },
   {
-    "idx": 292,
+    "idx": 294,
     "name": "__ZN9IOService20_RESERVEDIOService25Ev",
     "type": 1,
     "sect": 0,
@@ -2344,7 +2360,7 @@
     "value": 0
   },
   {
-    "idx": 293,
+    "idx": 295,
     "name": "__ZN9IOService20_RESERVEDIOService26Ev",
     "type": 1,
     "sect": 0,
@@ -2352,7 +2368,7 @@
     "value": 0
   },
   {
-    "idx": 294,
+    "idx": 296,
     "name": "__ZN9IOService20_RESERVEDIOService27Ev",
     "type": 1,
     "sect": 0,
@@ -2360,7 +2376,7 @@
     "value": 0
   },
   {
-    "idx": 295,
+    "idx": 297,
     "name": "__ZN9IOService20_RESERVEDIOService28Ev",
     "type": 1,
     "sect": 0,
@@ -2368,7 +2384,7 @@
     "value": 0
   },
   {
-    "idx": 296,
+    "idx": 298,
     "name": "__ZN9IOService20_RESERVEDIOService29Ev",
     "type": 1,
     "sect": 0,
@@ -2376,7 +2392,7 @@
     "value": 0
   },
   {
-    "idx": 297,
+    "idx": 299,
     "name": "__ZN9IOService20_RESERVEDIOService30Ev",
     "type": 1,
     "sect": 0,
@@ -2384,7 +2400,7 @@
     "value": 0
   },
   {
-    "idx": 298,
+    "idx": 300,
     "name": "__ZN9IOService20_RESERVEDIOService31Ev",
     "type": 1,
     "sect": 0,
@@ -2392,7 +2408,7 @@
     "value": 0
   },
   {
-    "idx": 299,
+    "idx": 301,
     "name": "__ZN9IOService20_RESERVEDIOService32Ev",
     "type": 1,
     "sect": 0,
@@ -2400,7 +2416,7 @@
     "value": 0
   },
   {
-    "idx": 300,
+    "idx": 302,
     "name": "__ZN9IOService20_RESERVEDIOService33Ev",
     "type": 1,
     "sect": 0,
@@ -2408,7 +2424,7 @@
     "value": 0
   },
   {
-    "idx": 301,
+    "idx": 303,
     "name": "__ZN9IOService20_RESERVEDIOService34Ev",
     "type": 1,
     "sect": 0,
@@ -2416,7 +2432,7 @@
     "value": 0
   },
   {
-    "idx": 302,
+    "idx": 304,
     "name": "__ZN9IOService20_RESERVEDIOService35Ev",
     "type": 1,
     "sect": 0,
@@ -2424,7 +2440,7 @@
     "value": 0
   },
   {
-    "idx": 303,
+    "idx": 305,
     "name": "__ZN9IOService20_RESERVEDIOService36Ev",
     "type": 1,
     "sect": 0,
@@ -2432,7 +2448,7 @@
     "value": 0
   },
   {
-    "idx": 304,
+    "idx": 306,
     "name": "__ZN9IOService20_RESERVEDIOService37Ev",
     "type": 1,
     "sect": 0,
@@ -2440,7 +2456,7 @@
     "value": 0
   },
   {
-    "idx": 305,
+    "idx": 307,
     "name": "__ZN9IOService20_RESERVEDIOService38Ev",
     "type": 1,
     "sect": 0,
@@ -2448,7 +2464,7 @@
     "value": 0
   },
   {
-    "idx": 306,
+    "idx": 308,
     "name": "__ZN9IOService20_RESERVEDIOService39Ev",
     "type": 1,
     "sect": 0,
@@ -2456,7 +2472,7 @@
     "value": 0
   },
   {
-    "idx": 307,
+    "idx": 309,
     "name": "__ZN9IOService20_RESERVEDIOService40Ev",
     "type": 1,
     "sect": 0,
@@ -2464,7 +2480,7 @@
     "value": 0
   },
   {
-    "idx": 308,
+    "idx": 310,
     "name": "__ZN9IOService20_RESERVEDIOService41Ev",
     "type": 1,
     "sect": 0,
@@ -2472,7 +2488,7 @@
     "value": 0
   },
   {
-    "idx": 309,
+    "idx": 311,
     "name": "__ZN9IOService20_RESERVEDIOService42Ev",
     "type": 1,
     "sect": 0,
@@ -2480,7 +2496,7 @@
     "value": 0
   },
   {
-    "idx": 310,
+    "idx": 312,
     "name": "__ZN9IOService20_RESERVEDIOService43Ev",
     "type": 1,
     "sect": 0,
@@ -2488,7 +2504,7 @@
     "value": 0
   },
   {
-    "idx": 311,
+    "idx": 313,
     "name": "__ZN9IOService20_RESERVEDIOService44Ev",
     "type": 1,
     "sect": 0,
@@ -2496,7 +2512,7 @@
     "value": 0
   },
   {
-    "idx": 312,
+    "idx": 314,
     "name": "__ZN9IOService20_RESERVEDIOService45Ev",
     "type": 1,
     "sect": 0,
@@ -2504,7 +2520,7 @@
     "value": 0
   },
   {
-    "idx": 313,
+    "idx": 315,
     "name": "__ZN9IOService20_RESERVEDIOService46Ev",
     "type": 1,
     "sect": 0,
@@ -2512,7 +2528,7 @@
     "value": 0
   },
   {
-    "idx": 314,
+    "idx": 316,
     "name": "__ZN9IOService20_RESERVEDIOService47Ev",
     "type": 1,
     "sect": 0,
@@ -2520,7 +2536,7 @@
     "value": 0
   },
   {
-    "idx": 315,
+    "idx": 317,
     "name": "__ZN9IOService20callPlatformFunctionEPK8OSSymbolbPvS3_S3_S3_",
     "type": 1,
     "sect": 0,
@@ -2528,7 +2544,7 @@
     "value": 0
   },
   {
-    "idx": 316,
+    "idx": 318,
     "name": "__ZN9IOService20callPlatformFunctionEPKcbPvS2_S2_S2_",
     "type": 1,
     "sect": 0,
@@ -2536,7 +2552,7 @@
     "value": 0
   },
   {
-    "idx": 317,
+    "idx": 319,
     "name": "__ZN9IOService20getDeviceMemoryCountEv",
     "type": 1,
     "sect": 0,
@@ -2544,7 +2560,7 @@
     "value": 0
   },
   {
-    "idx": 318,
+    "idx": 320,
     "name": "__ZN9IOService20unlockForArbitrationEv",
     "type": 1,
     "sect": 0,
@@ -2552,7 +2568,7 @@
     "value": 0
   },
   {
-    "idx": 319,
+    "idx": 321,
     "name": "__ZN9IOService21powerStateDidChangeToEmmPS_",
     "type": 1,
     "sect": 0,
@@ -2560,7 +2576,7 @@
     "value": 0
   },
   {
-    "idx": 320,
+    "idx": 322,
     "name": "__ZN9IOService22copyClientWithCategoryEPK8OSSymbol",
     "type": 1,
     "sect": 0,
@@ -2568,7 +2584,7 @@
     "value": 0
   },
   {
-    "idx": 321,
+    "idx": 323,
     "name": "__ZN9IOService22powerStateWillChangeToEmmPS_",
     "type": 1,
     "sect": 0,
@@ -2576,7 +2592,7 @@
     "value": 0
   },
   {
-    "idx": 322,
+    "idx": 324,
     "name": "__ZN9IOService23acknowledgeNotificationEPvj",
     "type": 1,
     "sect": 0,
@@ -2584,7 +2600,7 @@
     "value": 0
   },
   {
-    "idx": 323,
+    "idx": 325,
     "name": "__ZN9IOService23requestPowerDomainStateEmP17IOPowerConnectionm",
     "type": 1,
     "sect": 0,
@@ -2592,7 +2608,7 @@
     "value": 0
   },
   {
-    "idx": 324,
+    "idx": 326,
     "name": "__ZN9IOService24getDeviceMemoryWithIndexEj",
     "type": 1,
     "sect": 0,
@@ -2600,7 +2616,7 @@
     "value": 0
   },
   {
-    "idx": 325,
+    "idx": 327,
     "name": "__ZN9IOService24mapDeviceMemoryWithIndexEjj",
     "type": 1,
     "sect": 0,
@@ -2608,7 +2624,7 @@
     "value": 0
   },
   {
-    "idx": 326,
+    "idx": 328,
     "name": "__ZN9IOService24powerStateForDomainStateEm",
     "type": 1,
     "sect": 0,
@@ -2616,7 +2632,7 @@
     "value": 0
   },
   {
-    "idx": 327,
+    "idx": 329,
     "name": "__ZN9IOService27maxCapabilityForDomainStateEm",
     "type": 1,
     "sect": 0,
@@ -2624,7 +2640,7 @@
     "value": 0
   },
   {
-    "idx": 328,
+    "idx": 330,
     "name": "__ZN9IOService31initialPowerStateForDomainStateEm",
     "type": 1,
     "sect": 0,
@@ -2632,7 +2648,7 @@
     "value": 0
   },
   {
-    "idx": 329,
+    "idx": 331,
     "name": "__ZN9IOService4freeEv",
     "type": 1,
     "sect": 0,
@@ -2640,7 +2656,7 @@
     "value": 0
   },
   {
-    "idx": 330,
+    "idx": 332,
     "name": "__ZN9IOService4initEP12OSDictionary",
     "type": 1,
     "sect": 0,
@@ -2648,7 +2664,7 @@
     "value": 0
   },
   {
-    "idx": 331,
+    "idx": 333,
     "name": "__ZN9IOService4initEP15IORegistryEntryPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -2656,7 +2672,7 @@
     "value": 0
   },
   {
-    "idx": 332,
+    "idx": 334,
     "name": "__ZN9IOService4openEPS_jPv",
     "type": 1,
     "sect": 0,
@@ -2664,7 +2680,7 @@
     "value": 0
   },
   {
-    "idx": 333,
+    "idx": 335,
     "name": "__ZN9IOService4stopEPS_",
     "type": 1,
     "sect": 0,
@@ -2672,7 +2688,7 @@
     "value": 0
   },
   {
-    "idx": 334,
+    "idx": 336,
     "name": "__ZN9IOService5closeEPS_j",
     "type": 1,
     "sect": 0,
@@ -2680,7 +2696,7 @@
     "value": 0
   },
   {
-    "idx": 335,
+    "idx": 337,
     "name": "__ZN9IOService5probeEPS_Pi",
     "type": 1,
     "sect": 0,
@@ -2688,7 +2704,7 @@
     "value": 0
   },
   {
-    "idx": 336,
+    "idx": 338,
     "name": "__ZN9IOService6PMinitEv",
     "type": 1,
     "sect": 0,
@@ -2696,7 +2712,7 @@
     "value": 0
   },
   {
-    "idx": 337,
+    "idx": 339,
     "name": "__ZN9IOService6PMstopEv",
     "type": 1,
     "sect": 0,
@@ -2704,7 +2720,7 @@
     "value": 0
   },
   {
-    "idx": 338,
+    "idx": 340,
     "name": "__ZN9IOService6attachEPS_",
     "type": 1,
     "sect": 0,
@@ -2712,7 +2728,7 @@
     "value": 0
   },
   {
-    "idx": 339,
+    "idx": 341,
     "name": "__ZN9IOService6detachEPS_",
     "type": 1,
     "sect": 0,
@@ -2720,7 +2736,7 @@
     "value": 0
   },
   {
-    "idx": 340,
+    "idx": 342,
     "name": "__ZN9IOService7messageEjPS_Pv",
     "type": 1,
     "sect": 0,
@@ -2728,7 +2744,7 @@
     "value": 0
   },
   {
-    "idx": 341,
+    "idx": 343,
     "name": "__ZN9IOService8DispatchE5IORPC",
     "type": 1,
     "sect": 0,
@@ -2736,7 +2752,7 @@
     "value": 0
   },
   {
-    "idx": 342,
+    "idx": 344,
     "name": "__ZN9IOService8finalizeEj",
     "type": 1,
     "sect": 0,
@@ -2744,7 +2760,7 @@
     "value": 0
   },
   {
-    "idx": 343,
+    "idx": 345,
     "name": "__ZN9IOService9terminateEj",
     "type": 1,
     "sect": 0,
@@ -2752,7 +2768,7 @@
     "value": 0
   },
   {
-    "idx": 344,
+    "idx": 346,
     "name": "__ZN9IOServiceC2EPK11OSMetaClass",
     "type": 1,
     "sect": 0,
@@ -2760,7 +2776,7 @@
     "value": 0
   },
   {
-    "idx": 345,
+    "idx": 347,
     "name": "__ZN9IOServiceD2Ev",
     "type": 1,
     "sect": 0,
@@ -2768,7 +2784,7 @@
     "value": 0
   },
   {
-    "idx": 346,
+    "idx": 348,
     "name": "__ZNK11OSMetaClass12getMetaClassEv",
     "type": 1,
     "sect": 0,
@@ -2776,7 +2792,7 @@
     "value": 0
   },
   {
-    "idx": 347,
+    "idx": 349,
     "name": "__ZNK11OSMetaClass12taggedRetainEPKv",
     "type": 1,
     "sect": 0,
@@ -2784,7 +2800,7 @@
     "value": 0
   },
   {
-    "idx": 348,
+    "idx": 350,
     "name": "__ZNK11OSMetaClass13taggedReleaseEPKv",
     "type": 1,
     "sect": 0,
@@ -2792,7 +2808,7 @@
     "value": 0
   },
   {
-    "idx": 349,
+    "idx": 351,
     "name": "__ZNK11OSMetaClass13taggedReleaseEPKvi",
     "type": 1,
     "sect": 0,
@@ -2800,7 +2816,7 @@
     "value": 0
   },
   {
-    "idx": 350,
+    "idx": 352,
     "name": "__ZNK11OSMetaClass14getRetainCountEv",
     "type": 1,
     "sect": 0,
@@ -2808,7 +2824,7 @@
     "value": 0
   },
   {
-    "idx": 351,
+    "idx": 353,
     "name": "__ZNK11OSMetaClass19instanceConstructedEv",
     "type": 1,
     "sect": 0,
@@ -2816,7 +2832,7 @@
     "value": 0
   },
   {
-    "idx": 352,
+    "idx": 354,
     "name": "__ZNK11OSMetaClass6retainEv",
     "type": 1,
     "sect": 0,
@@ -2824,7 +2840,7 @@
     "value": 0
   },
   {
-    "idx": 353,
+    "idx": 355,
     "name": "__ZNK11OSMetaClass7releaseEi",
     "type": 1,
     "sect": 0,
@@ -2832,7 +2848,7 @@
     "value": 0
   },
   {
-    "idx": 354,
+    "idx": 356,
     "name": "__ZNK11OSMetaClass7releaseEv",
     "type": 1,
     "sect": 0,
@@ -2840,7 +2856,7 @@
     "value": 0
   },
   {
-    "idx": 355,
+    "idx": 357,
     "name": "__ZNK11OSMetaClass9serializeEP11OSSerialize",
     "type": 1,
     "sect": 0,
@@ -2848,7 +2864,7 @@
     "value": 0
   },
   {
-    "idx": 356,
+    "idx": 358,
     "name": "__ZNK15IORegistryEntry11compareNameEP8OSStringPS1_",
     "type": 1,
     "sect": 0,
@@ -2856,7 +2872,7 @@
     "value": 0
   },
   {
-    "idx": 357,
+    "idx": 359,
     "name": "__ZNK15IORegistryEntry11getLocationEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -2864,7 +2880,7 @@
     "value": 0
   },
   {
-    "idx": 358,
+    "idx": 360,
     "name": "__ZNK15IORegistryEntry11getPropertyEPK8OSString",
     "type": 1,
     "sect": 0,
@@ -2872,7 +2888,7 @@
     "value": 0
   },
   {
-    "idx": 359,
+    "idx": 361,
     "name": "__ZNK15IORegistryEntry11getPropertyEPK8OSStringPK15IORegistryPlanej",
     "type": 1,
     "sect": 0,
@@ -2880,7 +2896,7 @@
     "value": 0
   },
   {
-    "idx": 360,
+    "idx": 362,
     "name": "__ZNK15IORegistryEntry11getPropertyEPK8OSSymbol",
     "type": 1,
     "sect": 0,
@@ -2888,7 +2904,7 @@
     "value": 0
   },
   {
-    "idx": 361,
+    "idx": 363,
     "name": "__ZNK15IORegistryEntry11getPropertyEPK8OSSymbolPK15IORegistryPlanej",
     "type": 1,
     "sect": 0,
@@ -2896,7 +2912,7 @@
     "value": 0
   },
   {
-    "idx": 362,
+    "idx": 364,
     "name": "__ZNK15IORegistryEntry11getPropertyEPKc",
     "type": 1,
     "sect": 0,
@@ -2904,7 +2920,7 @@
     "value": 0
   },
   {
-    "idx": 363,
+    "idx": 365,
     "name": "__ZNK15IORegistryEntry11getPropertyEPKcPK15IORegistryPlanej",
     "type": 1,
     "sect": 0,
@@ -2912,7 +2928,7 @@
     "value": 0
   },
   {
-    "idx": 364,
+    "idx": 366,
     "name": "__ZNK15IORegistryEntry12compareNamesEP8OSObjectPP8OSString",
     "type": 1,
     "sect": 0,
@@ -2920,7 +2936,7 @@
     "value": 0
   },
   {
-    "idx": 365,
+    "idx": 367,
     "name": "__ZNK15IORegistryEntry12copyLocationEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -2928,7 +2944,7 @@
     "value": 0
   },
   {
-    "idx": 366,
+    "idx": 368,
     "name": "__ZNK15IORegistryEntry12copyPropertyEPK8OSString",
     "type": 1,
     "sect": 0,
@@ -2936,7 +2952,7 @@
     "value": 0
   },
   {
-    "idx": 367,
+    "idx": 369,
     "name": "__ZNK15IORegistryEntry12copyPropertyEPK8OSStringPK15IORegistryPlanej",
     "type": 1,
     "sect": 0,
@@ -2944,7 +2960,7 @@
     "value": 0
   },
   {
-    "idx": 368,
+    "idx": 370,
     "name": "__ZNK15IORegistryEntry12copyPropertyEPK8OSSymbol",
     "type": 1,
     "sect": 0,
@@ -2952,7 +2968,7 @@
     "value": 0
   },
   {
-    "idx": 369,
+    "idx": 371,
     "name": "__ZNK15IORegistryEntry12copyPropertyEPK8OSSymbolPK15IORegistryPlanej",
     "type": 1,
     "sect": 0,
@@ -2960,7 +2976,7 @@
     "value": 0
   },
   {
-    "idx": 370,
+    "idx": 372,
     "name": "__ZNK15IORegistryEntry12copyPropertyEPKc",
     "type": 1,
     "sect": 0,
@@ -2968,7 +2984,7 @@
     "value": 0
   },
   {
-    "idx": 371,
+    "idx": 373,
     "name": "__ZNK15IORegistryEntry12copyPropertyEPKcPK15IORegistryPlanej",
     "type": 1,
     "sect": 0,
@@ -2976,7 +2992,7 @@
     "value": 0
   },
   {
-    "idx": 372,
+    "idx": 374,
     "name": "__ZNK15IORegistryEntry13getChildEntryEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -2984,7 +3000,7 @@
     "value": 0
   },
   {
-    "idx": 373,
+    "idx": 375,
     "name": "__ZNK15IORegistryEntry14applyToParentsEPFvPS_PvES1_PK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -2992,7 +3008,7 @@
     "value": 0
   },
   {
-    "idx": 374,
+    "idx": 376,
     "name": "__ZNK15IORegistryEntry14copyChildEntryEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3000,7 +3016,7 @@
     "value": 0
   },
   {
-    "idx": 375,
+    "idx": 377,
     "name": "__ZNK15IORegistryEntry14getParentEntryEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3008,7 +3024,7 @@
     "value": 0
   },
   {
-    "idx": 376,
+    "idx": 378,
     "name": "__ZNK15IORegistryEntry15applyToChildrenEPFvPS_PvES1_PK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3016,7 +3032,7 @@
     "value": 0
   },
   {
-    "idx": 377,
+    "idx": 379,
     "name": "__ZNK15IORegistryEntry15copyParentEntryEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3024,7 +3040,7 @@
     "value": 0
   },
   {
-    "idx": 378,
+    "idx": 380,
     "name": "__ZNK15IORegistryEntry16getChildIteratorEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3032,7 +3048,7 @@
     "value": 0
   },
   {
-    "idx": 379,
+    "idx": 381,
     "name": "__ZNK15IORegistryEntry16getPathComponentEPcPiPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3040,7 +3056,7 @@
     "value": 0
   },
   {
-    "idx": 380,
+    "idx": 382,
     "name": "__ZNK15IORegistryEntry17getParentIteratorEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3048,7 +3064,7 @@
     "value": 0
   },
   {
-    "idx": 381,
+    "idx": 383,
     "name": "__ZNK15IORegistryEntry24dictionaryWithPropertiesEv",
     "type": 1,
     "sect": 0,
@@ -3056,7 +3072,7 @@
     "value": 0
   },
   {
-    "idx": 382,
+    "idx": 384,
     "name": "__ZNK15IORegistryEntry7getNameEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3064,7 +3080,7 @@
     "value": 0
   },
   {
-    "idx": 383,
+    "idx": 385,
     "name": "__ZNK15IORegistryEntry7getPathEPcPiPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3072,7 +3088,7 @@
     "value": 0
   },
   {
-    "idx": 384,
+    "idx": 386,
     "name": "__ZNK15IORegistryEntry7inPlaneEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3080,7 +3096,7 @@
     "value": 0
   },
   {
-    "idx": 385,
+    "idx": 387,
     "name": "__ZNK15IORegistryEntry7isChildEPS_PK15IORegistryPlaneb",
     "type": 1,
     "sect": 0,
@@ -3088,7 +3104,7 @@
     "value": 0
   },
   {
-    "idx": 386,
+    "idx": 388,
     "name": "__ZNK15IORegistryEntry8copyNameEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3096,7 +3112,7 @@
     "value": 0
   },
   {
-    "idx": 387,
+    "idx": 389,
     "name": "__ZNK15IORegistryEntry8getDepthEPK15IORegistryPlane",
     "type": 1,
     "sect": 0,
@@ -3104,7 +3120,7 @@
     "value": 0
   },
   {
-    "idx": 388,
+    "idx": 390,
     "name": "__ZNK15IORegistryEntry8isParentEPS_PK15IORegistryPlaneb",
     "type": 1,
     "sect": 0,
@@ -3112,7 +3128,7 @@
     "value": 0
   },
   {
-    "idx": 389,
+    "idx": 391,
     "name": "__ZNK15OSMetaClassBase9isEqualToEPKS_",
     "type": 1,
     "sect": 0,
@@ -3120,7 +3136,7 @@
     "value": 0
   },
   {
-    "idx": 390,
+    "idx": 392,
     "name": "__ZNK8OSObject12taggedRetainEPKv",
     "type": 1,
     "sect": 0,
@@ -3128,7 +3144,7 @@
     "value": 0
   },
   {
-    "idx": 391,
+    "idx": 393,
     "name": "__ZNK8OSObject13taggedReleaseEPKv",
     "type": 1,
     "sect": 0,
@@ -3136,7 +3152,7 @@
     "value": 0
   },
   {
-    "idx": 392,
+    "idx": 394,
     "name": "__ZNK8OSObject13taggedReleaseEPKvi",
     "type": 1,
     "sect": 0,
@@ -3144,7 +3160,7 @@
     "value": 0
   },
   {
-    "idx": 393,
+    "idx": 395,
     "name": "__ZNK8OSObject14getRetainCountEv",
     "type": 1,
     "sect": 0,
@@ -3152,7 +3168,7 @@
     "value": 0
   },
   {
-    "idx": 394,
+    "idx": 396,
     "name": "__ZNK8OSObject6retainEv",
     "type": 1,
     "sect": 0,
@@ -3160,7 +3176,7 @@
     "value": 0
   },
   {
-    "idx": 395,
+    "idx": 397,
     "name": "__ZNK8OSObject7releaseEi",
     "type": 1,
     "sect": 0,
@@ -3168,7 +3184,7 @@
     "value": 0
   },
   {
-    "idx": 396,
+    "idx": 398,
     "name": "__ZNK8OSObject7releaseEv",
     "type": 1,
     "sect": 0,
@@ -3176,7 +3192,7 @@
     "value": 0
   },
   {
-    "idx": 397,
+    "idx": 399,
     "name": "__ZNK8OSObject9serializeEP11OSSerialize",
     "type": 1,
     "sect": 0,
@@ -3184,7 +3200,7 @@
     "value": 0
   },
   {
-    "idx": 398,
+    "idx": 400,
     "name": "__ZNK9IOService11getProviderEv",
     "type": 1,
     "sect": 0,
@@ -3192,7 +3208,7 @@
     "value": 0
   },
   {
-    "idx": 399,
+    "idx": 401,
     "name": "__ZNK9IOService11getWorkLoopEv",
     "type": 1,
     "sect": 0,
@@ -3200,7 +3216,7 @@
     "value": 0
   },
   {
-    "idx": 400,
+    "idx": 402,
     "name": "__ZNK9IOService12handleIsOpenEPKS_",
     "type": 1,
     "sect": 0,
@@ -3208,7 +3224,7 @@
     "value": 0
   },
   {
-    "idx": 401,
+    "idx": 403,
     "name": "__ZNK9IOService17getClientIteratorEv",
     "type": 1,
     "sect": 0,
@@ -3216,7 +3232,7 @@
     "value": 0
   },
   {
-    "idx": 402,
+    "idx": 404,
     "name": "__ZNK9IOService19getProviderIteratorEv",
     "type": 1,
     "sect": 0,
@@ -3224,7 +3240,7 @@
     "value": 0
   },
   {
-    "idx": 403,
+    "idx": 405,
     "name": "__ZNK9IOService19serializePropertiesEP11OSSerialize",
     "type": 1,
     "sect": 0,
@@ -3232,7 +3248,7 @@
     "value": 0
   },
   {
-    "idx": 404,
+    "idx": 406,
     "name": "__ZNK9IOService21getOpenClientIteratorEv",
     "type": 1,
     "sect": 0,
@@ -3240,7 +3256,7 @@
     "value": 0
   },
   {
-    "idx": 405,
+    "idx": 407,
     "name": "__ZNK9IOService23getOpenProviderIteratorEv",
     "type": 1,
     "sect": 0,
@@ -3248,7 +3264,7 @@
     "value": 0
   },
   {
-    "idx": 406,
+    "idx": 408,
     "name": "__ZNK9IOService6isOpenEPKS_",
     "type": 1,
     "sect": 0,
@@ -3256,7 +3272,7 @@
     "value": 0
   },
   {
-    "idx": 407,
+    "idx": 409,
     "name": "__ZNK9IOService8getStateEv",
     "type": 1,
     "sect": 0,
@@ -3264,7 +3280,7 @@
     "value": 0
   },
   {
-    "idx": 408,
+    "idx": 410,
     "name": "__ZNK9IOService9getClientEv",
     "type": 1,
     "sect": 0,
@@ -3272,7 +3288,7 @@
     "value": 0
   },
   {
-    "idx": 409,
+    "idx": 411,
     "name": "__ZTV12IOUserClient",
     "type": 1,
     "sect": 0,
@@ -3280,7 +3296,7 @@
     "value": 0
   },
   {
-    "idx": 410,
+    "idx": 412,
     "name": "__ZTV9IOService",
     "type": 1,
     "sect": 0,
@@ -3288,7 +3304,7 @@
     "value": 0
   },
   {
-    "idx": 411,
+    "idx": 413,
     "name": "_kvtophys",
     "type": 1,
     "sect": 0,
