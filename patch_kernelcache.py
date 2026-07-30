@@ -49,6 +49,57 @@ NEW_IOCLASS = b"<key>IOClass</key><string>InfernoVGPUHello</string>"
 OLD_IOCLASS_AGX = b"<key>IOClass</key><string>AGXAcceleratorG12P_B0</string>"
 NEW_IOCLASS_AGX = b"<key>IOClass</key><string>InfernoVGPUHello</string>"
 
+# ---------------------------------------------------------------------------
+# SIGKILL-gate byte patches (baked in permanently, 2026-07-30 session).
+#
+# Five independent kernel security gates were found live-patching every
+# freshly-transferred unsigned MAIN EXECUTABLE into an instant `Killed: 9`
+# at exec time (see PROJECT_STATUS.md's "CRITICAL: the SIGKILL mystery"
+# section for the full derivation of each one -- breakpoint traces,
+# disassembly, live verification). All five were previously only ever
+# applied in-memory via GDB against the running QEMU process, and were lost
+# on every restart. This table makes them permanent, file-level patches,
+# applied the same way as everything else in this script (straight
+# file-offset byte replacement via va2off).
+#
+# Each entry is (VA, orig_bytes, new_bytes, description). Before writing,
+# the bytes actually present at that file offset are asserted to exactly
+# match orig_bytes -- if a mismatch is found, it means either the offset
+# math is wrong or this isn't the same kernelcache build these patches were
+# derived against, and patching blindly would be dangerous.
+SIGKILL_GATE_PATCHES = [
+    (
+        0xfffffff007eef788,
+        bytes.fromhex("a0000034"),
+        bytes.fromhex("05000014"),
+        "gate #1: load_machfile cbz->b, ignore parse_machfile failure",
+    ),
+    (
+        0xfffffff0082f2b18,
+        bytes.fromhex("e800c837"),
+        bytes.fromhex("07000014"),
+        "gate #2a: AMFI cred_label_update_execve tbnz->b, ignore csflags bit25 (dyld sig check)",
+    ),
+    (
+        0xfffffff0082f2b8c,
+        bytes.fromhex("800b0036"),
+        bytes.fromhex("1f2003d5"),
+        "gate #2b: AMFI cred_label_update_execve NOP tbz, ignore loadEntitlementsFromVnode failure",
+    ),
+    (
+        0xfffffff0092b0f00,
+        bytes.fromhex("e0060034"),
+        bytes.fromhex("1f2003d5"),
+        "gate #3: Sandbox hook_cred_label_update_execve NOP cbz, ignore \"only launchd...\" check",
+    ),
+    (
+        0xfffffff0092b126c,
+        bytes.fromhex("08060034"),
+        bytes.fromhex("1f2003d5"),
+        "gate #4: Sandbox hook_cred_label_update_execve NOP cbz, ignore \"outside of container...\" check",
+    ),
+]
+
 
 def va2off(data, va):
     ncmds = struct.unpack_from("<I", data, 16)[0]
@@ -87,6 +138,19 @@ def main():
     section += b"\x00" * total_delta
     assert len(section) == INFO_SEC_SIZE
     data[INFO_SEC_OFF:section_end] = section
+
+    # ---- apply the 5 SIGKILL-gate byte patches (see table above) ----
+    for va, orig_bytes, new_bytes, desc in SIGKILL_GATE_PATCHES:
+        off = va2off(data, va)
+        assert off is not None, f"va2off failed for VA {hex(va)} ({desc})"
+        actual = bytes(data[off:off + len(orig_bytes)])
+        assert actual == orig_bytes, (
+            f"SIGKILL gate patch mismatch at VA {hex(va)} (file offset {hex(off)}): "
+            f"expected {orig_bytes.hex()}, found {actual.hex()} -- {desc}"
+        )
+        data[off:off + len(new_bytes)] = new_bytes
+        print(f"SIGKILL gate patch applied at VA {hex(va)} (file offset {hex(off)}): "
+              f"{orig_bytes.hex()} -> {new_bytes.hex()} -- {desc}")
 
     # ---- inject resolved IOKit class blob ----
     with open("/home/makr/Documents/inferno-vgpu-kext/resolved_blob.bin", "rb") as f:

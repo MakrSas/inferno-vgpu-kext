@@ -25,25 +25,41 @@ not just an isolated test-harness readback.
 - Real Metal **render/draw** pipeline: same shape, ending in a correctly
   rasterized triangle read back via `getBytes` (off-screen texture only,
   not on-screen yet — see below).
+- The **5 SIGKILL-gate patches are now PERMANENT**, baked directly into
+  `kernelcache.vgpu2.patched` by `patch_kernelcache.py` (no longer
+  live-memory/GDB-only). Verified with a real, full QEMU kill+relaunch
+  (not just code review): after the fresh boot, `/sigkill_test` goes
+  straight to `Segmentation fault: 11` (the same benign unrelated-bug
+  failure mode documented below, NOT `Killed: 9`) with zero GDB attached,
+  and `/compute_test`/`/draw_test` both run to completion with fully
+  correct results via plain `execve()`, also with zero GDB attached. See
+  the dedicated dated update at the end of the SIGKILL section below for
+  full detail.
 - The **system-wide patch**: `___MTLCreateSystemDefaultDevice_block_invoke`
   inside the guest's own `dyld_shared_cache_arm64e` is hand-patched (raw
   ARM64 machine code, see `patch_block_invoke.py`) to redirect to our own
   bridge dylib (`/b` on the guest, built from `inferno_agx_bridge.m` +
   `inferno_command_queue.m` + `inferno_render_encoder.m`). Confirmed the
-  patch bytes are still intact in the guest's DSC. **This means ANY real,
-  unmodified app calling the standard public `MTLCreateSystemDefaultDevice()`
-  gets our full device** — no dlopen tricks needed on the caller's side.
-  `agx_system_metal_test.m` is the test proving this (written, built,
-  **not yet live-verified specifically** — but the SIGKILL issue that used
-  to block it is now fully resolved, see the "later session" update deep
-  in the SIGKILL section below: all 5 exec-time kill gates (AMFI ×2,
-  Sandbox.kext ×2, plus the original `load_machfile` one) are
-  live-patched, and 4 *other* unsigned test binaries
-  (`compute_test`/`draw_test`/`metal_api_test`/`agx_functional_test`) now
-  run to completion via plain `execve()` with zero kills and correct
-  results. `agx_system_metal_test` itself just hasn't specifically been
-  re-run since — should now work the same way, next session should just
-  try it directly rather than via the bash-builtin workaround).
+  patch bytes are still intact in the guest's DSC, including after the
+  fresh reboot above (it's disk-resident, not memory-only, so this was
+  expected but was re-verified anyway). **This means ANY real, unmodified
+  app calling the standard public `MTLCreateSystemDefaultDevice()` gets our
+  full device** — no dlopen tricks needed on the caller's side — and this
+  IS observed happening for real, unrelated system processes (e.g. `dmesg`
+  shows `com.apple.MapKit` hitting our patch's `dlopen("/b")` call and
+  getting a sandbox deny reading `/b`, proving MapKit's own, real,
+  unmodified call to `MTLCreateSystemDefaultDevice()` really does reach our
+  patch).
+  **`agx_system_metal_test.m` (the test that was supposed to prove this end
+  to end via its own dedicated process) has now been run — it does NOT
+  pass.** It crashes (`EXC_BAD_ACCESS`/`SIGSEGV`) before it ever reaches
+  `MTLCreateSystemDefaultDevice()` at all (confirmed via live kernel-GDB
+  breakpoints at the real function's outer entry, its inner
+  `block_invoke`, and every step of our own patch — none of them ever
+  fire), i.e. **this is not a bug in our patch** — something earlier in
+  process launch is faulting. Full diagnostic writeup, what's ruled out,
+  and the leading hypothesis are in a new section right after this one,
+  "`agx_system_metal_test` crash investigation (2026-07-30)".
 
 **CONFIRMED WORKING, live, visually verified via QEMU screendump (2026-07-30):**
 - `INFERNO_VGPU_OP_PRESENT` renders and blits a real triangle (AIR→SPIR-V via
@@ -106,6 +122,132 @@ not just an isolated test-harness readback.
   `AGXPrincipalDevice` fallback layer's `MTLDeviceSPI` conformance far
   enough (~523 private methods beyond the 112 public `MTLDevice` ones) that
   it could actually be trusted for real compositing. Not attempted yet.
+
+## `agx_system_metal_test` crash investigation (2026-07-30)
+
+This is the direct answer to the open question this section used to end
+with ("not yet live-verified specifically"). Once the 5 SIGKILL gates were
+baked permanently into the kernelcache (see the dated update at the end of
+the SIGKILL section below) and verified via a real reboot, the CI-built
+`agx_system_metal_test` binary (run `30569211270`, `agx-bridge-dylib`
+artifact, `out8/agx_system_metal_test`, 68992 bytes) was transferred to the
+guest (`/agx_system_metal_test`, chunked transfer, ~885s, size verified
+68992==68992) and run via plain direct `execve()` — no bash-builtin, no
+GDB attached for the run itself.
+
+**Result: it crashes.** `Segmentation fault: 11` (exit 139), reproduced
+twice. Critically, this is **not** one of the known SIGKILL gates — `dmesg`
+shows no AMFI/Sandbox kill message at all for either run (unlike the
+gate-by-gate `/sigkill_test` history above), confirming this is a genuine
+new userspace crash, not a security-policy kill.
+
+**Standard crash reporting is non-functional in this VM environment** for
+any process crash (not specific to this test): both `.ips` reports in
+`/var/mobile/Library/Logs/CrashReporter/agx_system_metal_test-*.ips` show
+`Backtrace not available`, `Binary images description not available`, and
+`Error Formulating Crash Report: Failed to create CSSymbolicatorRef -
+corpse still valid`, with every register (including `pc`/`lr`) dumped as
+literal `0x0`. Given ReportCrash apparently can't symbolicate/read the
+corpse of a genuinely-unsigned process at all (plausibly because our own
+SIGKILL-gate bypasses skip trust setup that ReportCrash's own corpse-access
+path still expects), **this all-zero register dump should NOT be trusted
+as the real PC** — it looks like a degraded placeholder, not a real crash
+snapshot. Don't use it as evidence of anything; treat it as "ReportCrash is
+broken here", full stop.
+
+**Real diagnosis instead came from live kernel-GDB breakpoints** (own
+minimal RSP client scripts, following `gdb_rsp2.py`'s pattern, arm
+breakpoint → trigger `/agx_system_metal_test` from a separate serial
+connection → observe hits, using the documented remove/single-step/
+reinsert dance on every hit to avoid the infinite-retrap gotcha):
+
+- Breakpointed the ENTIRE `MTLCreateSystemDefaultDevice` call chain at
+  once: the real outer exported function's own entry
+  (`_MTLCreateSystemDefaultDevice` at `0x1970505d0`, address from this
+  project's own memory notes, originally found via `ipsw dyld symaddr
+  --image Metal`), the inner `dispatch_once` block's entry
+  (`___MTLCreateSystemDefaultDevice_block_invoke` at `0x1970506e4`), our
+  own injected patch body's start (`0x1970506fc`), the two stub call
+  targets our patch invokes (`dlopen` stub `0x1970a5cc0`, `dlsym` stub
+  `0x1970a5cd0`), and the block's shared epilogue (`0x197050750`).
+  **None of these ever fired**, across two separate triggered runs. This
+  conclusively rules out our own `block_invoke` patch as the cause — the
+  process crashes before Metal.framework's device-creation code, patched
+  or not, is ever entered at all.
+- Also confirmed via the caller side: `agx_system_metal_test.m`'s own
+  `MTrace()` helper writes a line to `/tmp/m_trace.log` as the literal
+  first statement inside `main()`'s `@autoreleasepool` block, before
+  calling `MTLCreateSystemDefaultDevice()`. **This file is never created**
+  (confirmed `/tmp` itself is writable — a plain `echo test > /tmp/probe.txt`
+  from the same root shell succeeds fine) — meaning execution never even
+  reaches the first line of `main()`, consistent with the breakpoint
+  findings above.
+- Tested and ruled out a specific alternate hypothesis: that gate #1's
+  overly-broad `load_machfile` patch (documented above as "ignores ANY
+  `parse_machfile` failure reaching that return point, not just the
+  specific `got_code_signatures` gate") might be letting a *genuinely,
+  differently* malformed load through for this specific binary, producing
+  an incompletely-initialized process. Breakpointed gate #1's own site
+  (`0xfffffff007eef788`) during a triggered run: `x0` (parse_machfile's
+  real return value) was `0x4` (`LOAD_FAILURE`) — but this is the *exact
+  same* value/code path already documented for `/sigkill_test` and,
+  necessarily, for every other unsigned binary this patch already handles
+  correctly (`compute_test`/`draw_test`/etc. all lack `LC_CODE_SIGNATURE`
+  too, so they hit the identical `got_code_signatures` gate and the
+  identical forced-success patch). Since the value and code path are
+  identical to binaries that DO work, this is not a differentiator — ruled
+  out.
+
+**Leading hypothesis (not yet proven at the exact instruction level):**
+`agx_system_metal_test.m` is the **first** binary in this project's whole
+test history to reference the real exported C symbol
+`_MTLCreateSystemDefaultDevice` directly, at compile/link time (`clang
+... -framework Metal`, plain function call). Every other test that has
+ever been run via direct `execve()`
+(`compute_test`/`draw_test`/`agx_functional_test`/`metal_api_test`) instead
+obtains the device via a **runtime** `dlopen("/b")` + `dlsym(handle, "Q")`
++ call — confirmed by grepping their sources (e.g.
+`src/userspace_test/agx_metal_api_draw_test.m` line 66 area) — which never
+requires dyld to bind any Metal.framework C symbol at link time at all;
+they only touch Metal.framework's Objective-C classes
+(`MTLTextureDescriptor`, `MTLRenderPipelineDescriptor`, etc.), which
+resolve via the ObjC runtime's own class-list mechanism, not standard
+symbol/PLT-style binding. The likely fault site is therefore inside
+**dyld's own process-launch-time symbol binding/resolution** for this one
+specific external symbol — not anywhere in Metal.framework's own compiled
+code (which the breakpoint sweep above never even reaches), and not
+related to our patch.
+
+**Next steps for whoever picks this up:**
+1. Find dyld's own lazy/eager-binding entry point's VA (would need `ipsw`
+   — not installed on this Linux host this session — or a from-scratch
+   DSC export-trie/symbol-table parser) and breakpoint there to catch the
+   actual faulting instruction directly, the same two-phase LR-capture
+   technique used throughout the SIGKILL investigation would apply
+   directly.
+2. Faster empirical unblock, no new tooling needed: rewrite
+   `agx_system_metal_test.m` to obtain the function pointer via
+   `dlsym(RTLD_DEFAULT, "MTLCreateSystemDefaultDevice")` and call through
+   that, instead of calling the symbol directly — if this alone fixes the
+   crash, it confirms the eager-linktime-binding theory precisely and
+   gives a usable pattern for future "prove the real system API surface
+   works" tests without waiting on dyld internals to be fully understood.
+   (Caveat: this would slightly weaken the "genuinely unmodified calling
+   pattern" framing the test was designed around, since a real app would
+   just call the C symbol directly — worth keeping both versions once this
+   is unblocked, so the direct-symbol-call version stays available as a
+   regression check once/if the real root cause is fixed.)
+3. Whichever fix lands, re-run via the exact same steps documented here
+   (transfer, plain direct exec, check for `Segmentation fault` vs `ALL
+   CHECKS PASSED`) — do not assume clean based on a partial pipeline
+   change alone, this test's whole point is being the strictest, most
+   realistic check in the suite.
+
+QEMU/guest state was left clean after this investigation: all GDB
+breakpoints removed, VM confirmed `running` (not paused) via QMP, `dmesg`
+scanned for panics (none), and `/compute_test` re-run as a sanity check
+(still passes, `result = 42 (expect 42)`) to confirm the GDB session
+itself didn't corrupt anything.
 
 ## CRITICAL: the SIGKILL mystery and its workaround
 
@@ -622,19 +764,18 @@ debugging session in this project's history armed and firing; budget
 extra rounds (hundreds, not tens) and don't assume a stop at an
 unexpected PC means anything went wrong, it's very likely just old noise.
 
-**Caveat, same as gate #1**: all five patches (gate #1's `load_machfile`
-fix plus this session's four) are **live-memory-only** and will be lost
-on the next QEMU restart, exactly like gate #1 — they were **not** baked
-into `kernelcache.vgpu2.patched` via `patch_kernelcache.py` (that script
-is currently special-purpose, only handling the `InfernoVGPUHello`
-constructor-redirect injection, not a general byte-patch mechanism; gate
-#1 wasn't baked in either, so this follows the established precedent
-rather than diverging from it). A future session wanting permanence
-should extend `patch_kernelcache.py` with a small table of
-`(file_offset, original_bytes, new_bytes)` entries and apply all five (plus
-gate #1's) as a matter of course when regenerating
-`kernelcache.vgpu2.patched`. All five patch addresses/bytes, for that
-table:
+**Caveat, same as gate #1 (RESOLVED — see the dated update immediately
+below the table)**: all five patches (gate #1's `load_machfile` fix plus
+this session's four) were **live-memory-only** and would be lost on the
+next QEMU restart, exactly like gate #1 — they were **not** baked into
+`kernelcache.vgpu2.patched` via `patch_kernelcache.py` (that script was
+previously special-purpose, only handling the `InfernoVGPUHello`
+constructor-redirect injection, not a general byte-patch mechanism). A
+future session wanting permanence should extend `patch_kernelcache.py`
+with a small table of `(file_offset, original_bytes, new_bytes)` entries
+and apply all five (plus gate #1's) as a matter of course when
+regenerating `kernelcache.vgpu2.patched`. All five patch addresses/bytes,
+for that table:
 | # | VA | orig bytes | new bytes | meaning |
 |---|----|-----------|-----------|---------|
 | 1 | `0xfffffff007eef788` | `a0 00 00 34` | `05 00 00 14` | `load_machfile`: `cbz`→`b`, ignore `parse_machfile` failure |
@@ -657,6 +798,68 @@ live-memory patch appliers) — all under
 cleaned up; the extended `mini_disasm.py` (with ADRP/ADR/BLR/BR support
 added this session) is the one piece worth recreating first in any future
 session that needs to read more of this kernel's compiled code.)
+
+### UPDATE 2026-07-30 (later session): all 5 patches now PERMANENTLY baked
+### into the kernelcache file, verified with a real QEMU restart
+
+Extended `patch_kernelcache.py` with a small, clearly-separated
+`SIGKILL_GATE_PATCHES` table (the exact 5-row table above) and a loop that
+applies each as a straight file-offset byte replacement, reusing the
+script's own existing `va2off()` helper (same one already used for the
+`InfernoVGPUHello` ctor-redirect injection). Each patch asserts the
+original bytes at its computed file offset exactly match the table before
+writing — this fired correctly (all 5 passed) confirming the file offsets
+and the underlying kernelcache build genuinely match what the live-memory
+investigation was patching.
+
+Before running: backed up the previous known-good
+`kernelcache.vgpu2.patched` to `kernelcache.vgpu2.patched.backup_pre_
+sigkill_bake` (the script itself has no built-in backup/versioning, so
+this was a manual `cp` first — worth remembering for next time too, the
+script always overwrites `KC_OUT` unconditionally).
+
+Ran `python3 patch_kernelcache.py`: all 5 gate-patch assertions passed,
+personality-hijack injection still applied normally afterward, wrote a new
+`kernelcache.vgpu2.patched` (same file size, `54613232` bytes, different
+md5 from the backup as expected).
+
+**Verified with a REAL QEMU kill+relaunch** (not just trusting the code —
+live-memory patches from earlier sessions "worked" too until the process
+died, so only a genuine restart proves anything): killed the running QEMU
+process, relaunched via the standard `launch_shell.sh` playbook
+(`launch_shell_stdoutJJ.log`). Boot came up clean — no panics in
+`dmesg`, the `InfernoVGPUHello` present-dispatch retry thread visibly
+active in QEMU's own stdout log (proves the personality-hijack injection
+also survived correctly, not just the new gate patches), guest shell
+reachable via `guest_tools/shell_cmd.py`, `/sbin/mount -uw /` succeeded.
+
+Then, **with zero GDB attached at any point**:
+- `/sigkill_test` → `Segmentation fault: 11` (exit 139), **not**
+  `Killed: 9` — the exact same benign unrelated-bug failure mode already
+  documented above as the *expected* post-all-5-patches result. `dmesg`
+  confirmed no AMFI/Sandbox kill message either.
+- `/compute_test` → `IOServiceOpen succeeded, connection=0x130b` /
+  `ComputeDispatch returned 4 bytes` / `result = 42 (expect 42)`, exit 0.
+- `/draw_test` → full render pipeline, every `CHECK` line `OK`, `center
+  pixel RGBA = 255,0,0,255` / `corner pixel RGBA = 0,0,0,0`, `ALL CHECKS
+  PASSED`, exit 0.
+
+This conclusively proves the patches are genuinely file-baked, not an
+artifact of leftover GDB state or a QEMU process that merely looked fresh
+— a real kill+relaunch cycle was completed first. The `patch_
+kernelcache.py` changes (new `SIGKILL_GATE_PATCHES` table + application
+loop, ~55 lines) are the only code change; the byte values themselves are
+unchanged from the table already documented above, so no new addresses to
+track.
+
+Also independently re-verified as part of this same session, before the
+restart: the `___MTLCreateSystemDefaultDevice_block_invoke` DSC patch
+bytes at guest file offset `0x170506fc` decode to the expected `sub
+sp,#0x20` / dlopen-glue instruction sequence from `patch_block_invoke.py`'s
+`build_patch()`, confirming that patch (disk-resident, unrelated to this
+kernelcache work) also remained intact across the restart, as expected
+since it's written directly to the guest's persistent root disk image, not
+memory-only.
 
 ## Environment reference
 
