@@ -108,34 +108,194 @@ content (MD5-verified correct), file path, kernelcache/dylib version, or
 boot freshness. This affects every new test binary, including ones with
 logic identical to previously-working tests.
 
-**Root cause NOT found**, despite very extensive live kernel debugging
-(QEMU's own gdbstub — see `guest_tools/gdb_rsp2.py`). What WAS ruled out,
-definitively, via live breakpoints on the running kernel:
-- NOT AMFI/code-signing rejection — `mac_vnode_check_signature` (the actual
-  gate) returns 0 (allowed) for our binaries.
-- NOT a userspace `kill()` syscall from another process (runningboardd or
-  otherwise) — breakpointed `_kill` itself, 601 calls observed, all
-  unrelated noise (`signum=0` existence probes), none targeting our process.
-- NOT `psignal`/`psignal_locked`/`cs_invalid_page`/`memorystatus_kill_proc`/
-  `proc_exit` called by name — none of these breakpoints ever fired for this
-  kill.
-- IS delivered via the normal signal path (confirmed: breakpoint on
-  `exit_with_reason`, called from `postsig_locked`, catches it — `x1=9`
-  (SIGKILL), `x2=NULL` (no structured `os_reason`, unlike real AMFI/jetsam
-  kills which normally attach one)).
-- Conclusion: the SIGKILL bit is being set by inlined kernel code with no
-  catchable named-symbol call site — needs a hardware watchpoint on the
-  live process's actual `proc_t.p_siglist` field to find it, which needs an
-  exact byte offset that couldn't be reliably computed by hand (see XNU
-  source notes below). **Actively being investigated** (see the
-  root-cause-in-progress notes further down / task tracker) — deprioritized
-  for a while in favor of getting the on-screen render working first, now
-  back under investigation since that milestone landed.
-- Also ruled out: SEP state corruption (tried resetting `sep_nvram`/
-  `sep_ssc` to blank per the official setup guide's method — this actually
-  **crashed the whole QEMU process**, not just the guest; reverted from
-  backup, confirmed working again — **do not retry blind SEP resets on an
-  already-installed system**, blank init only works at true first-boot).
+### UPDATE 2026-07-30: root cause #1 FOUND, confirmed, and live-patched
+
+**The earlier "x2=NULL, no os_reason" note above was WRONG** — it was
+reading the wrong register. The real `exit_with_reason` signature (from
+`apple-oss-distributions/xnu` tag `xnu-7195.50.7.100.1`,
+`bsd/sys/proc_internal.h`) is `exit_with_reason(struct proc *p, int rv,
+int *retval, boolean_t thread_can_terminate, boolean_t proc_transiting,
+int fd_before_close_count, struct os_reason *exit_reason)` — the
+`os_reason_t` is **x6**, not x2, and x6 is **NOT NULL**. Dumping the
+struct at x6 (fields per `bsd/sys/reason.h`: `osr_lock` (opaque
+`lck_mtx_t`, empirically 16 bytes on this build), `osr_refcount` (u32),
+`osr_namespace` (u32), `osr_code` (u64), `osr_flags` (u64), `osr_bufsize`
+(u32), ...) decoded cleanly as:
+- `osr_namespace = 9` = `OS_REASON_EXEC`
+- `osr_code = 1` = `EXEC_EXIT_REASON_BAD_MACHO`
+- `osr_flags = 0x40` = `OS_REASON_FLAG_CONSISTENT_FAILURE`
+
+This immediately proved the kill is **not** a raw inlined signal-bit OR at
+all — it's a deliberate, structured kill from the kernel's own **Mach-O
+image-activation/exec path**, not the codesigning/sandbox/IOKit stack.
+
+**Traced to the exact function and instruction.** Used a two-phase
+technique throughout (breakpoint a callee's entry to capture its return
+address via LR/x30, then breakpoint that return address to read the real
+return value in x0) — this reliably finds call sites and their return
+values without needing a real disassembler.
+
+Concretely: `kern_exec.c`'s `exec_mach_imgact()` calls `load_machfile()`
+(`bsd/kern/mach_loader.c`), which calls `parse_machfile()`. Breakpointing
+`_parse_machfile`'s own return address inside `load_machfile`
+(`0xfffffff007eef788`, confirmed via the LR-capture trick) showed **`x0 =
+4` = `LOAD_FAILURE`** for `/sigkill_test`, specifically and reproducibly —
+verified against a **clean baseline**: 200+ background `load_machfile`
+calls from normal system activity over 37s, zero of which ever returned
+nonzero. `parse_machfile()`'s source (matching `mach_loader.c` from the
+same xnu tag) has exactly one `LOAD_FAILURE` site that fits, right after
+its main load-command-processing loop:
+
+```c
+if (ret == LOAD_SUCCESS) {
+    if (!got_code_signatures && cs_process_global_enforcement()) {
+        ret = LOAD_FAILURE;
+    }
+    ...
+}
+```
+
+`/sigkill_test` (and every other bare unsigned test binary built by this
+project's CI, e.g. via plain `clang -target arm64e-apple-ios14.0 ... -o
+out`, no `codesign` step) has **no `LC_CODE_SIGNATURE` load command at
+all** (confirmed by manually parsing `inferno_vgpu_test_binary`'s load
+commands, and cross-checked against the exact bytes the kernel reads at
+its `load_machfile()` breakpoint — bit-for-bit match: `magic=0xfeedfacf
+cputype=0x0100000c(ARM64) cpusubtype=0x80000002(ARM64E) filetype=2
+ncmds=19 sizeofcmds=1328 flags=0x200085(NOUNDEFS|DYLDLINK|TWOLEVEL|PIE)`,
+has proper `LC_MAIN` at `entryoff=0x4000` inside a valid R+X `__TEXT`, so
+none of the *other* ~35 `LOAD_FAILURE`/`LOAD_BADMACHO` sites in
+`mach_loader.c` apply). So `got_code_signatures` stays `FALSE` for the
+whole function, and `cs_process_global_enforcement()` — **confirmed via
+live memory read to be a hardcoded `mov w0,#1; ret` stub** (i.e. always
+returns true on this build) — makes the check unconditionally fail. This
+is why the kill is instant, silent, and 100% content-independent: it
+never even gets to reading the binary's actual TEXT, just its load
+commands.
+
+**Why `dlopen()` was immune (explains the existing workaround below):**
+`dlopen()` is 100% userspace (dyld parsing the Mach-O itself) and never
+calls the kernel's `load_machfile()`/`parse_machfile()` at all — only
+`execve()`-driven process activation does. No new/separate "third
+mechanism" needed to explain this; it falls straight out of the finding.
+
+**Confirmed NOT the cause** (unchanged from before, still valid): AMFI's
+`mac_vnode_check_signature` MACF hook (returns 0/allowed — it's a
+*different*, pluggable policy layer, not this hardcoded structural
+check), a userspace `kill()`, and `psignal`/`cs_invalid_page`/
+`memorystatus_kill_proc`/`proc_exit` called by name.
+
+**Live-patched and verified end-to-end.** Two GDB patches applied this
+session (both **in-memory only, do NOT survive a QEMU restart** — see
+"Environment reference" below for why):
+1. `_cs_process_global_enforcement` (`0xfffffff007e3f914`): original bytes
+   `mov w0,#1; ret` → patched to `mov w0,#0; ret`. **Turned out to be a
+   no-op for this specific bug** — confirmed via a dedicated breakpoint
+   that the standalone symbol is **never actually called** during a
+   triggered exec (0 hits across 10 trigger attempts over 60s watching
+   its entry address), meaning the compiler constant-folded the trivial
+   `return 1;` body directly into each of its ~4 call sites at compile
+   time (this kernel is presumably built with LTO/whole-module
+   optimization). Harmless to leave patched (correct in intent for any
+   non-inlined callers elsewhere), but not the effective fix.
+2. **The actual effective fix**: found the real compiled branch by
+   dumping and hand-disassembling the instructions around
+   `load_machfile`'s `parse_machfile` call site (wrote a minimal ARM64
+   disassembler, `/tmp/.../scratchpad/mini_disasm.py`, covering
+   MOVZ/MOVN/MOVK, CBZ/CBNZ, TBZ/TBNZ, B/BL/B.cond, RET, LDR/STR/LDP/STP,
+   ADD/SUB/CMP imm, ORR/MOV reg — enough to read compiler-generated
+   control flow without a real disassembler on this Linux host). Found
+   exactly:
+   ```
+   0xfffffff007eef784: bl   _parse_machfile
+   0xfffffff007eef788: cbz  w0, 0xfffffff007eef79c   ; if success, skip failure path
+   0xfffffff007eef78c: mov  x27, x0                   ; (failure path)
+   0xfffffff007eef790: mov  x0, x28
+   0xfffffff007eef794: bl   vm_map_deallocate
+   0xfffffff007eef798: b    0xfffffff007eef85c        ; return lret
+   0xfffffff007eef79c: ...                            ; success path continues
+   ```
+   Patched the `cbz w0, 0xfffffff007eef79c` (bytes `a0 00 00 34`) at
+   `0xfffffff007eef788` into an **unconditional branch to the exact same
+   target**, `b 0xfffffff007eef79c` (bytes `05 00 00 14`) — i.e. `load_
+   machfile` now always takes the "parse succeeded" continuation,
+   regardless of what `parse_machfile()` actually returned. (Note: my
+   first instinct — overwrite with `mov w0,#0` — would have been WRONG,
+   since that address holds a *branch* instruction, not a value consumer;
+   always disassemble/verify before patching a conditional branch, don't
+   assume the "obvious" register-clearing patch applies.)
+   - **Verified `/sigkill_test`'s original failure mode (instant silent
+     `Killed: 9`, zero output) is GONE** after this patch.
+   - System stability double-checked afterward: `uptime`, `ps aux` (174
+     procs), `dmesg` all normal, no panics — the patch is narrowly scoped
+     (only changes behavior for execs where `parse_machfile` would
+     otherwise have failed *after* its main loop, i.e. after segments/
+     entry-point/thread-state were already validly set up, so it's safe
+     even though broader than the ideal minimal fix — see caveat below).
+
+**Caveat / next step for a permanent fix:** this patch is **broader than
+ideal** — it makes `load_machfile` ignore *any* `parse_machfile` failure
+reaching that return point, not just the specific `got_code_signatures`
+gate. The exact internal branch instruction that tests `got_code_
+signatures` itself (inside `parse_machfile`'s own ~0x1db8-byte compiled
+body, `0xfffffff007eef880`–`0xfffffff007ef1638`) was not pinpointed within
+this session's time budget — the tail of the function interleaves with an
+inlined recursive dylinker-loading path (`parse_machfile` calling itself
+for `LC_LOAD_DYLINKER`, also inlined) that made isolating the one check
+from its neighbors nontrivial by hand. A future pass should either finish
+that disassembly (the dumped bytes are saved at
+`/tmp/.../scratchpad/parse_machfile_tail.bin`, offset `0xfffffff007ef1200`)
+or accept the current caller-side patch as adequate (it only ever matters
+for genuinely-failing execs, which in this project's controlled test
+scenario is exactly what we want to allow through).
+
+### UPDATE, same investigation: a SECOND, independent gate exists
+
+After patch #1 above, `/sigkill_test` **no longer fails silently** — it
+now fails with an explicit, visible kernel log line first:
+
+```
+AMFI: hook..execve() killing pid 465: dyld signature cannot be verified.
+You either have a corrupt system image or are trying to run an unsigned
+application outside of a supported development configuration.
+Killed: 9
+```
+
+(still `Killed: 9` / exit 137, but now with a real diagnostic — a huge
+improvement for whoever debugs this next). This is a genuinely **separate,
+independent** code-signature enforcement layer from the `parse_machfile`/
+`cs_process_global_enforcement` gate just fixed, living in
+`AppleMobileFileIntegrity.kext` (confirmed the exact string exists once,
+literally, in the kernelcache via `strings kernelcache.decompressed |
+grep "dyld signature cannot be verified"`; found many neighboring
+`AppleMobileFileIntegrity::*` C++ symbols in `kernel-symbols.txt`, e.g.
+`__ZN24AppleMobileFileIntegrity17validateSignatureE...`, but did **not**
+find an exact symbol match for the emitting function itself within this
+session's time budget — the literal C function name behind the "hook..
+execve()" log text wasn't in the demangled symbol list under an obvious
+name). **This is the clear next step**: locate this string's virtual
+address (file-offset → VA, same math `resolve.py`/`patch_kernelcache.py`
+already do), find what function references it (an `ADRP`+`ADD` pair
+loading the string's address, likely for a `printf`/`os_log` call, findable
+by scanning nearby `.text` for that pattern or just breakpointing candidate
+`AppleMobileFileIntegrity` symbols one at a time and checking `dmesg`
+after each triggered `/sigkill_test`), then apply the **same
+verify-then-patch approach** used above (disassemble first, find the exact
+conditional branch guarding the kill decision, patch *that* branch to be
+unconditional in the safe direction — don't guess at register-clearing
+patches blindly).
+
+Also worth doing as a quick follow-up: re-capture `exit_with_reason`'s x6
+`os_reason` now that patch #1 is in place, to see this *second* kill's
+reason (likely `OS_REASON_CODESIGNING` given the AMFI-specific message,
+which would be a nice confirming cross-check).
+
+**Also ruled out** (from earlier in the investigation, still valid): SEP
+state corruption (tried resetting `sep_nvram`/`sep_ssc` to blank per the
+official setup guide's method — this actually **crashed the whole QEMU
+process**, not just the guest; reverted from backup, confirmed working
+again — **do not retry blind SEP resets on an already-installed system**,
+blank init only works at true first-boot).
 
 **THE WORKAROUND (use this for all new guest-side test logic going
 forward):** the kill only affects **new process exec()**, not **`dlopen()`
