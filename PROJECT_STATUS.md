@@ -34,9 +34,16 @@ not just an isolated test-harness readback.
   unmodified app calling the standard public `MTLCreateSystemDefaultDevice()`
   gets our full device** — no dlopen tricks needed on the caller's side.
   `agx_system_metal_test.m` is the test proving this (written, built,
-  **not yet live-verified** — blocked by the SIGKILL issue below until the
-  bash-builtin workaround, which itself hasn't been tried against this
-  specific test yet either).
+  **not yet live-verified specifically** — but the SIGKILL issue that used
+  to block it is now fully resolved, see the "later session" update deep
+  in the SIGKILL section below: all 5 exec-time kill gates (AMFI ×2,
+  Sandbox.kext ×2, plus the original `load_machfile` one) are
+  live-patched, and 4 *other* unsigned test binaries
+  (`compute_test`/`draw_test`/`metal_api_test`/`agx_functional_test`) now
+  run to completion via plain `execve()` with zero kills and correct
+  results. `agx_system_metal_test` itself just hasn't specifically been
+  re-run since — should now work the same way, next session should just
+  try it directly rather than via the bash-builtin workaround).
 
 **CONFIRMED WORKING, live, visually verified via QEMU screendump (2026-07-30):**
 - `INFERNO_VGPU_OP_PRESENT` renders and blits a real triangle (AIR→SPIR-V via
@@ -297,9 +304,27 @@ process**, not just the guest; reverted from backup, confirmed working
 again — **do not retry blind SEP resets on an already-installed system**,
 blank init only works at true first-boot).
 
-**THE WORKAROUND (use this for all new guest-side test logic going
-forward):** the kill only affects **new process exec()**, not **`dlopen()`
-of an unsigned dylib from an already-running, already-trusted process**.
+**UPDATE 2026-07-30 (later session): this workaround is likely OBSOLETE
+now — read the "gates #2-#5" update further down first.** All five
+exec-time kill gates (this AMFI one plus four more found in the same later
+session, two more in AMFI and two in a completely separate Sandbox.kext
+hook) are now live-patched, and plain direct `execve()` of unsigned test
+binaries has been verified working end-to-end with real functionality
+(`IOServiceOpen`, GPU compute/draw dispatch, all correct). **New test
+logic going forward should probably just be a normal standalone
+executable again, not a bash loadable builtin** — try direct exec first;
+only fall back to the builtin trick below if something about that
+specific new test still gets killed (would indicate a still-undiscovered
+sixth gate). The bash-builtin section below is kept for reference/history
+and because it may still matter for anything that specifically needs to
+run *inside* `/bin/bash`'s own already-established process (e.g. its
+particular entitlements or credentials), but it is no longer required
+just to dodge a kill.
+
+**THE WORKAROUND (historical — see update immediately above before using
+this for new work):** the kill only affects **new process exec()**, not
+**`dlopen()` of an unsigned dylib from an already-running, already-trusted
+process**.
 Proven directly: `enable -f /b someRandomName` from the interactive root
 bash shell (bash's own
 [loadable-builtins](https://www.gnu.org/software/bash/manual/html_node/Loadable-Builtins.html)
@@ -403,6 +428,236 @@ iokit-user-client-class` entitlement check and neutralizing that too
 exemption, e.g. an IOKit-side property, which might be more surgical than
 another kernel patch — not yet investigated).
 
+### UPDATE 2026-07-30 (later session): gates #2-#5 found, all patched —
+### unsigned execve() now works completely, end-to-end, verified with real test binaries
+
+Picked up exactly where the previous session left off. **Re-verified state
+first** per the coordination note: `ps aux | grep qemu-system` showed the
+*same* QEMU pid the previous session had been using (no restart happened
+in between), and running `/sigkill_test` confirmed gate #1's patch was
+still live (got the AMFI diagnostic message, not a silent kill) — so no
+re-patching of gate #1 was needed before starting.
+
+**Gate #2a: found and patched.** Used file-offset→VA arithmetic (same
+segment-walk approach as `resolve.py`'s `va2off`, just inverted) to locate
+the three literal `"AMFI: hook..execve() killing pid %u: ..."` reason
+strings in `__TEXT,__cstring`, then wrote a small ADRP+ADD/LDR scanner
+(`find_adrp_refs.py`, not committed — lived in scratch) over the whole
+`__TEXT_EXEC __text` section (`0xfffffff0079ec000`, size `0x1def9c0`) to
+find which function actually references each string's address. All three
+led to the same function: **`_cred_label_update_execve`**
+(`0xfffffff0082f2a30`–`0xfffffff0082f2f84`, 0x554 bytes) — this is
+**AMFI's own implementation of the `cred_label_update_execve` MACF policy
+hook** (matches xnu's `mpo_cred_label_update_execve_t` signature: `(ucred*
+old, ucred* new, proc*, vnode*, off_t, vnode* script, label*, label*,
+label*, u_int *csflags, void*, size_t, int *disjointp)`). Extended
+`mini_disasm.py` with ADRP/ADR/BLR/BR decoding and hand-disassembled the
+whole function (dumped bytes saved to
+`/tmp/.../scratchpad/cred_label_update_execve.bin` — scratch-only, not
+committed, would need re-dumping in a future session). Also had to
+correctly decode one `CCMP` (conditional-compare) instruction
+(`0xfa401800`) that a naive read would have misread as an unconditional
+compare — decoded it bit-field-by-bit-field in Python to get the real
+short-circuit `(w23 != 0 && x0 == 0)` semantics right before trusting any
+conclusion about the surrounding control flow.
+
+Found the exact gate: `_cred_label_update_execve` loads `*csflags` into
+`w8` (via a stack-spilled pointer, `x23 = [x29+0x18]`, one of the hook's
+own arguments) and does:
+```
+0xfffffff0082f2b18: tbnz w8, #25, 0xfffffff0082f2b34   ; bit set -> skip kill, continue
+0xfffffff0082f2b1c: mov x0, x20                         ; (kill path) get pid
+0xfffffff0082f2b20: bl   0xfffffff007e72df4
+0xfffffff0082f2b24: str  x0, [x31, #0x0]
+0xfffffff0082f2b28: adrp x0, 0xfffffff0073ab000
+0xfffffff0082f2b2c: add  x0, x0, #0x8f                  ; "...dyld signature cannot be verified..."
+0xfffffff0082f2b30: b    0xfffffff0082f2d14             ; shared kill+log call
+```
+**Live-verified before touching anything**: breakpointed both
+`0xfffffff0082f2b28` (kill path) and `0xfffffff0082f2b34` (skip-kill
+path), ran ~45s of idle boot activity as a clean baseline (many hits at
+the skip-kill address, bit25 always 1, zero hits at the kill address),
+then triggered `/sigkill_test` and got a hit at the kill address with
+`w8=0x300` → **bit25=0**, confirming causality precisely. Patched
+`tbnz w8,#25,...` (bytes `e8 00 c8 37`) into an unconditional
+`b 0xfffffff0082f2b34` (bytes `07 00 00 14`, same target, same technique
+as gate #1's `cbz`→`b`). Verified: `/sigkill_test` no longer produces the
+"dyld signature cannot be verified" message.
+
+**Gate #2b (a second, independent check inside the SAME function): found
+and patched.** Re-running `/sigkill_test` after gate #2a's patch produced
+a *different* kill message: `"AMFI: hook..execve() killing pid N: no code
+signature"` — exactly the "there could be a third gate" scenario this
+task's instructions warned about. Traced it to the same function, a bit
+further down: right after gate #2a's skip-kill target, the function calls
+`bl 0xfffffff0082f2f84` (the very next symbol,
+`StaticPlatformPolicy<...>::loadEntitlementsFromVnode`, called with
+`(&dict_out, vnode, offset, &errmsg_out)`), then:
+```
+0xfffffff0082f2b8c: tbz w0, #0, 0xfffffff0082f2cfc   ; bit CLEAR -> kill (generic "%s" message, errmsg_out)
+```
+The kill path here uses the OUT-PARAM string from `loadEntitlementsFromVnode`
+itself (`"no code signature"` — an accurate description, since this
+project's CI-built test binaries genuinely have no `LC_CODE_SIGNATURE` at
+all) fed through a generic `"AMFI: hook..execve() killing pid %u: %s\n"`
+format, rather than one of the three hardcoded strings gate #2a used.
+Live-verified the same way (breakpoint + idle baseline + triggered hit):
+saw `w0=1` (bit0 set) for an ambient/pre-existing process and `w0=0` for
+the freshly-triggered one. **Patch technique differs slightly from gate
+#2a here**: since the branch's own *fallthrough* (not-taken) address is
+already the success continuation, the minimal correct patch is a plain
+**NOP** (`d503201f`) over the `tbz` (bytes `80 0b 00 36` → `1f 20 03 d5`),
+not a retargeted branch — "always don't take this branch" and "NOP the
+branch" are the same outcome here, and NOP is simpler/more obviously
+correct than computing a same-target branch. Verified: the "no code
+signature" message also stopped appearing.
+
+**Gate #3 (a THIRD, entirely separate kext): found and patched.**
+Re-running `/sigkill_test` again after gate #2b's patch produced **yet
+another** kill, this time completely silent again (matching the *original*
+pre-gate-#1 symptom exactly) — `dmesg` revealed why: `"Sandbox:
+hook..execve() killing <unsigned>[pid=N, uid=0]: only launchd is allowed
+to spawn untrusted binaries"`. Critically, this message never reaches the
+interactive serial console the way AMFI's messages do (it only shows up in
+`dmesg`), which is why `/sigkill_test`'s own output looked identical to
+the original mystery — **worth remembering for any future gate: always
+check `dmesg` after a silent kill, not just the triggering shell's own
+output**, since not every kext's log line makes it to the tty.
+
+This is **Sandbox.kext's own, separate implementation** of the exact same
+`cred_label_update_execve` MACF hook AMFI implements — a different C
+function, in a completely different kext's address range:
+**`_hook_cred_label_update_execve`** (`0xfffffff0092b0e54`–
+`0xfffffff0092b1454`, 0x600 bytes; note the AMFI hook is named
+`_cred_label_update_execve` with no `_hook_` prefix — easy to conflate the
+two by name alone, don't). Found the same way (string → ADRP/ADD scan →
+enclosing symbol via `kernel-symbols.txt`). The gate:
+```
+0xfffffff0092b0ef0: mov x0, x22            ; x22 = vnode
+0xfffffff0092b0ef4: bl   0xfffffff007e739b4
+0xfffffff0092b0ef8: mov  x20, x0
+0xfffffff0092b0efc: bl   0xfffffff007e7428c
+0xfffffff0092b0f00: cbz  w0, 0xfffffff0092b0fdc   ; w0==0 -> kill ("only launchd is allowed...")
+```
+Live-verified: breakpointed `0xfffffff0092b0f00`, triggered
+`/sigkill_test`, got `w0=0` on the very next hit (round 16, ~2s after the
+trigger — this address had never been breakpointed before so there was no
+leftover-breakpoint noise to wade through, unlike gates #2a/#2b). Patched
+with a NOP (same reasoning as #2b): bytes `e0 06 00 34` → `1f 20 03 d5`
+at `0xfffffff0092b0f00`.
+
+**Gate #4 (a fourth check, same Sandbox.kext function): found and
+patched.** Re-testing after gate #3's patch produced **another** silent
+kill; `dmesg` showed `"Sandbox: hook..execve() killing <unsigned>[pid=N,
+uid=0]: outside of container && !i_can_has_debugger"` — a distinctive,
+almost debug-assertion-style message, clearly a deliberate sandbox
+**containment** policy (as opposed to AMFI's pure code-signing checks):
+roughly "an unsigned binary can only run if it's inside its declared
+sandbox container, or the caller holds a debugger entitlement". Found in
+the same function, further down (this function is a long chain of
+sandbox-profile-string checks, each following the same
+`adrp+add(profile-name-string)+bl 0x8125d80(intern?)+bl
+0x7b53960(sandbox_check_profile-style call)+cbz` pattern — the target
+message's specific gate):
+```
+0xfffffff0092b1268: ldr  w8, [x31, #0x3c]              ; flag set once, early in the function
+0xfffffff0092b126c: cbz  w8, 0xfffffff0092b132c         ; w8==0 -> kill ("outside of container...")
+```
+Live-verified the same way: breakpointed `0xfffffff0092b126c`, triggered,
+got `w8=0` on the very next hit (round 76, ~9s after trigger — some
+leftover noise from earlier sessions' breakpoints, but far less than
+gates #2a/#2b). Patched with a NOP: bytes `08 06 00 34` → `1f 20 03 d5` at
+`0xfffffff0092b126c`.
+
+**After all five patches (gate #1 + #2a + #2b + #3 + #4), `/sigkill_test`
+no longer gets killed by the security stack at all** — no more `Killed:
+9`, and no more AMFI/Sandbox log lines in `dmesg` for any subsequent
+trigger. Its new failure mode is `Segmentation fault: 11` (exit 139) — a
+**completely different, unrelated class of failure** (a real userspace
+crash, signal 11, not a policy-driven signal 9). This is expected to be a
+bug/limitation specific to that one minimal test binary (its source isn't
+in this repo — likely built ad-hoc in an earlier session and only the
+compiled binary was ever transferred to the guest) rather than a sign of
+a sixth gate, confirmed by the next paragraph.
+
+**End-to-end verification with REAL functional test binaries** (already
+present on the guest from earlier sessions, at `/compute_test`,
+`/draw_test`, `/metal_api_test`, `/agx_functional_test` — all built the
+same unsigned way as `/sigkill_test`, i.e. equally subject to every gate
+above): **all four ran to completion with exit code 0 and fully correct
+results**, e.g. `/compute_test`: `IOServiceOpen succeeded... result = 42
+(expect 42)`; `/draw_test`: full render pipeline, `ALL CHECKS PASSED`;
+`/metal_api_test`: full compute pipeline, `ALL CHECKS PASSED`;
+`/agx_functional_test`: `0 failure(s)`. This is a major milestone beyond
+just "fixing the SIGKILL bug" — **it's the first time this project's real
+Metal test suite has run via genuine, direct `execve()`** rather than the
+`dlopen`-from-bash-builtin workaround, and notably `/compute_test`'s
+`IOServiceOpen` succeeded *without* hitting the separate
+`com.apple.security.iokit-user-client-class` entitlement wall documented
+above — strong evidence that wall is specific to `/bin/bash`'s own signed,
+sandboxed profile (as the existing writeup already suspected: "raw
+unsigned standalone test binaries... apparently run with no sandbox
+profile attached at all"), not something every unsigned process hits.
+
+**System stability re-checked after all five patches**: `uptime` (1:00,
+climbing normally), `ps aux` (175 procs), `dmesg` scanned for
+panic/assert (nothing), QMP `info status` (`running`, not paused) — all
+normal.
+
+**Methodology note for future sessions — a real gdbstub gotcha hit and
+fixed this session**: a naive loop of repeated GDB RSP `c` (continue)
+calls **will infinite-loop forever** the instant it actually hits one of
+its own software breakpoints, because a software breakpoint is a patched
+trap instruction left in memory — `continue` alone just re-executes and
+re-traps on the exact same instruction forever; the PC never advances.
+(First symptom: a breakpoint that should fire once appeared to fire 600+
+times in a row with byte-for-bit identical register state — that's the
+tell.) The fix, standard for any minimal RSP client: on a hit, **remove
+the breakpoint (`z0,addr,4`), single-step once (`s`), then reinsert it
+(`Z0,addr,4`)** before continuing. Also reconfirmed the earlier session's
+note that QEMU's gdbstub breakpoint list **persists across TCP
+reconnects** — a fresh RSP connection to the same long-lived QEMU process
+can and does still have dozens of stale breakpoints from every earlier
+debugging session in this project's history armed and firing; budget
+extra rounds (hundreds, not tens) and don't assume a stop at an
+unexpected PC means anything went wrong, it's very likely just old noise.
+
+**Caveat, same as gate #1**: all five patches (gate #1's `load_machfile`
+fix plus this session's four) are **live-memory-only** and will be lost
+on the next QEMU restart, exactly like gate #1 — they were **not** baked
+into `kernelcache.vgpu2.patched` via `patch_kernelcache.py` (that script
+is currently special-purpose, only handling the `InfernoVGPUHello`
+constructor-redirect injection, not a general byte-patch mechanism; gate
+#1 wasn't baked in either, so this follows the established precedent
+rather than diverging from it). A future session wanting permanence
+should extend `patch_kernelcache.py` with a small table of
+`(file_offset, original_bytes, new_bytes)` entries and apply all five (plus
+gate #1's) as a matter of course when regenerating
+`kernelcache.vgpu2.patched`. All five patch addresses/bytes, for that
+table:
+| # | VA | orig bytes | new bytes | meaning |
+|---|----|-----------|-----------|---------|
+| 1 | `0xfffffff007eef788` | `a0 00 00 34` | `05 00 00 14` | `load_machfile`: `cbz`→`b`, ignore `parse_machfile` failure |
+| 2a | `0xfffffff0082f2b18` | `e8 00 c8 37` | `07 00 00 14` | AMFI hook: `tbnz`→`b`, ignore csflags bit25 (dyld sig check) |
+| 2b | `0xfffffff0082f2b8c` | `80 0b 00 36` | `1f 20 03 d5` | AMFI hook: NOP `tbz`, ignore loadEntitlementsFromVnode failure |
+| 3 | `0xfffffff0092b0f00` | `e0 06 00 34` | `1f 20 03 d5` | Sandbox hook: NOP `cbz`, ignore "only launchd..." check |
+| 4 | `0xfffffff0092b126c` | `08 06 00 34` | `1f 20 03 d5` | Sandbox hook: NOP `cbz`, ignore "outside of container..." check |
+
+(Scratch-only scripts from this session, not committed since they're
+throwaway/reusable-pattern rather than reusable-as-is: `off2va.py`
+(file-offset→VA, inverse of `resolve.py`'s `va2off`), `find_adrp_refs.py`
+(ADRP+ADD/LDR reference scanner given a target VA), `verify_gate2.py` /
+`verify_gate2b.py` / `verify_gate3.py` / `verify_gate4.py` /
+`verify_gate5.py` (breakpoint+trigger+correlate verification harnesses,
+each a small variation on the same pattern — worth consolidating into one
+parameterized script if this pattern gets used again), `patch_gate2.py`
+/ `patch_gate3.py` / `patch_gate4.py` / `patch_gate5.py` (the actual
+live-memory patch appliers) — all under
+`/tmp/.../scratchpad/` per session convention, gone once the scratchpad is
+cleaned up; the extended `mini_disasm.py` (with ADRP/ADR/BLR/BR support
+added this session) is the one piece worth recreating first in any future
+session that needs to read more of this kernel's compiled code.)
+
 ## Environment reference
 
 - Working dir: `/home/makr/Documents/Inferno/InfernoData` (QEMU launch
@@ -498,16 +753,27 @@ another kernel patch — not yet investigated).
    /b` — no kernel/QEMU restart needed, `/b` is dlopen'd fresh every time
    (by the block_invoke patch AND by anything else that dlopens it).
 
-## Playbook: running new test logic (use the bash-builtin pattern!)
+## Playbook: running new test logic
 
-1. Write a new `.m` file implementing bash's `struct builtin` ABI (see
-   `src/userspace_test/bash_present_builtin.m`).
-2. Add a CI step compiling it as `-dynamiclib` (see the `agx-bridge-dylib`
-   job in `.github/workflows/build.yml` for the pattern).
-3. Transfer the resulting `.dylib` to the guest (any path, `/tmp` is fine
-   since it only needs to survive until you load it, not across reboots).
-4. On the guest: `enable -f /tmp/whatever.dylib my_builtin_name` then just
-   run `my_builtin_name`.
+**UPDATE 2026-07-30: try plain direct exec first now** (see the "gates
+#2-#5" update in the SIGKILL section — all known exec-time kill gates are
+patched and 4 real test binaries now run cleanly via normal `execve()`).
+Only fall back to the bash-builtin pattern below if a specific new test
+still gets killed.
+
+1. Write a new standalone `main()`-based test binary (any of
+   `src/userspace_test/*.m`'s non-builtin examples), or, for the
+   historical bash-builtin route: a `.m` file implementing bash's `struct
+   builtin` ABI (see `src/userspace_test/bash_present_builtin.m`).
+2. Add/reuse a CI step compiling it (plain executable, or `-dynamiclib`
+   for the builtin route — see the `agx-bridge-dylib` job in
+   `.github/workflows/build.yml` for the builtin pattern).
+3. Transfer the resulting binary to the guest (any path, `/tmp` is fine
+   for a plain executable that only needs to survive until you run it;
+   the builtin route additionally needs `/` specifically, not `/tmp` — see
+   the historical workaround section above for why).
+4. Run it directly (`/whatever_test`), or, for the builtin route: `enable
+   -f /path/to/whatever.dylib my_builtin_name` then run `my_builtin_name`.
 
 ## `guest_tools/` scripts in this repo
 
