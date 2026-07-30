@@ -73,6 +73,11 @@ extern void InfernoAssociateVGPUConnection(id device, io_connect_t conn);
 extern void InfernoInstallCommandQueueFallback(id device);
 extern void InfernoInstallBufferFallback(id device);
 extern void InfernoInstallComputeFallback(id device);
+// Defined in inferno_render_encoder.m -- real -newTextureWithDescriptor:/
+// -newRenderPipelineStateWithDescriptor:error: (the render-side siblings of
+// InfernoInstallComputeFallback/InfernoInstallBufferFallback).
+extern void InfernoInstallTextureFallback(id device);
+extern void InfernoInstallRenderPipelineFallback(id device);
 
 static void InfernoAddIfMissing(id device, SEL sel, IMP imp, const char *types)
 {
@@ -99,6 +104,8 @@ static void InfernoPatchMissingDeviceMethods(id device, io_connect_t conn)
     InfernoInstallCommandQueueFallback(device);
     InfernoInstallBufferFallback(device);
     InfernoInstallComputeFallback(device);
+    InfernoInstallTextureFallback(device);
+    InfernoInstallRenderPipelineFallback(device);
 }
 
 // Exported as "Q": the raw machine-code patch in

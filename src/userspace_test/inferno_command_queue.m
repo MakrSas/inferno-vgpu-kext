@@ -18,6 +18,9 @@
 #import <objc/runtime.h>
 #import <dispatch/dispatch.h>
 
+// Defined in inferno_render_encoder.m.
+extern void InfernoInstallRenderCommandEncoderFallback(id commandBuffer);
+
 @class InfernoComputeCommandEncoder;
 // Forward-declares just the one selector InfernoCommandBuffer's
 // -computeCommandEncoder needs before InfernoComputeCommandEncoder's real
@@ -114,6 +117,9 @@ static NSData *InfernoSendComputeDispatch(io_connect_t conn, NSData *air,
     }
     _vgpuConnection = conn;
     _status = MTLCommandBufferStatusNotEnqueued;
+    // Defined in inferno_render_encoder.m -- idempotent (checks
+    // respondsToSelector first), cheap to call on every instance.
+    InfernoInstallRenderCommandEncoderFallback(self);
     return self;
 }
 

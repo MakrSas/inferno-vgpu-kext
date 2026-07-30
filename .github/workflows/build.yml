@@ -339,7 +339,8 @@ jobs:
             -dynamiclib -install_name /usr/lib/inferno_agx_bridge.dylib \
             -o out8/inferno_agx_bridge.dylib \
             src/userspace_test/inferno_agx_bridge.m \
-            src/userspace_test/inferno_command_queue.m
+            src/userspace_test/inferno_command_queue.m \
+            src/userspace_test/inferno_render_encoder.m
           file out8/inferno_agx_bridge.dylib
           otool -hv out8/inferno_agx_bridge.dylib
           echo "--- exported symbols (need InfernoGetAGXDevice) ---"
@@ -386,6 +387,16 @@ jobs:
             -framework Foundation -framework Metal \
             -o out8/agx_metal_api_compute_test src/userspace_test/agx_metal_api_compute_test.m
           file out8/agx_metal_api_compute_test
+
+      - name: "Compile agx_metal_api_draw_test.m (real Metal render API surface: newTextureWithDescriptor/newRenderPipelineState.../renderCommandEncoder/drawPrimitives -> real GPU rasterization via inferno_render_daemon)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal \
+            -o out8/agx_metal_api_draw_test src/userspace_test/agx_metal_api_draw_test.m
+          file out8/agx_metal_api_draw_test
 
       - uses: actions/upload-artifact@v4
         if: always()
