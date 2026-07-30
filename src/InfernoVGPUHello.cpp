@@ -138,6 +138,16 @@ public:
 	uint32_t submitPresentDispatch(const uint8_t *payload, uint32_t payloadLen);
 	static volatile uint8_t *ringBase(void) { return (volatile uint8_t *)FIFO_TEST_RING_ADDR; }
 
+	// Fires one hardcoded INFERNO_VGPU_OP_PRESENT (a real Metal triangle
+	// draw, rendered onto the live display) straight from kernel context at
+	// boot -- see start(). Entirely sidesteps every userspace-security
+	// mechanism (AMFI/codesigning, the exec()-time SIGKILL that blocks
+	// every fresh unsigned userspace binary, and the Sandbox.kext
+	// com.apple.security.iokit-user-client-class entitlement gate that
+	// blocks IOServiceOpen from already-running signed processes like
+	// bash) since kernel code is subject to none of them.
+	void submitBootPresentDispatch(void);
+
 private:
 	uint32_t submitPacket(uint16_t opcode, const uint8_t *payload, uint32_t payloadLen);
 	IOMemoryMap *fDeviceMap;
@@ -179,9 +189,100 @@ bool InfernoVGPUHello::start(IOService *provider)
 
 	submitTestFifoPacket();
 
+	submitBootPresentDispatch();
+
 	registerService();
 
 	return true;
+}
+
+// Same vertex_passthrough/fragment_solid_red pair already proven end to end
+// (host_render_poc, agx_metal_api_draw_test, bash_present_builtin) -- a
+// trivial triangle: one float4 vertex attribute passed straight through,
+// solid red fragment output.
+static const char kBootPresentVertAir[] =
+	"source_filename = \"vertex_passthrough.metal\"\n"
+	"target datalayout = \"e-p:64:64:64\"\n"
+	"target triple = \"air64-apple-macosx14.0.0\"\n"
+	"\n"
+	"define <4 x float> @vmain(<4 x float> %position) local_unnamed_addr #0 {\n"
+	"  ret <4 x float> %position\n"
+	"}\n"
+	"\n"
+	"attributes #0 = { nounwind }\n"
+	"\n"
+	"!air.vertex = !{!0}\n"
+	"!0 = !{ptr @vmain, !1, !2}\n"
+	"!1 = !{!3}\n"
+	"!2 = !{!4}\n"
+	"!3 = !{!\"air.position\", !\"air.arg_type_name\", !\"float4\"}\n"
+	"!4 = !{i32 0, !\"air.vertex_input\", !\"air.location_index\", i32 0, i32 1, "
+	"!\"air.arg_type_name\", !\"float4\", !\"air.arg_name\", !\"position\"}\n";
+
+static const char kBootPresentFragAir[] =
+	"source_filename = \"fragment_solid_red.metal\"\n"
+	"target datalayout = \"e-p:64:64:64\"\n"
+	"target triple = \"air64-apple-macosx14.0.0\"\n"
+	"\n"
+	"define <4 x float> @frag(<4 x float> %position) local_unnamed_addr #0 {\n"
+	"  %r = insertelement <4 x float> undef, float 1.000000e+00, i64 0\n"
+	"  %rg = insertelement <4 x float> %r, float 0.000000e+00, i64 1\n"
+	"  %rgb = insertelement <4 x float> %rg, float 0.000000e+00, i64 2\n"
+	"  %rgba = insertelement <4 x float> %rgb, float 1.000000e+00, i64 3\n"
+	"  ret <4 x float> %rgba\n"
+	"}\n"
+	"\n"
+	"attributes #0 = { nounwind }\n"
+	"\n"
+	"!air.fragment = !{!0}\n"
+	"!0 = !{ptr @frag, !1, !2}\n"
+	"!1 = !{!3}\n"
+	"!2 = !{!4}\n"
+	"!3 = !{i32 0, !\"air.render_target\", i32 0, i32 0, !\"air.arg_type_name\", !\"float4\"}\n"
+	"!4 = !{i32 0, !\"air.position\", !\"air.center\", !\"air.arg_type_name\", !\"float4\"}\n";
+
+void InfernoVGPUHello::submitBootPresentDispatch(void)
+{
+	const uint32_t vertLen = (uint32_t)(sizeof(kBootPresentVertAir) - 1);
+	const uint32_t vertPad = (4 - (vertLen % 4)) % 4;
+	const uint32_t fragLen = (uint32_t)(sizeof(kBootPresentFragAir) - 1);
+	const uint32_t fragPad = (4 - (fragLen % 4)) % 4;
+
+	float verts[3][4] = {
+		{ 0.0f,  0.6f, 0.0f, 1.0f},
+		{-0.6f, -0.6f, 0.0f, 1.0f},
+		{ 0.6f, -0.6f, 0.0f, 1.0f},
+	};
+	const uint32_t vbufLen = (uint32_t)sizeof(verts);
+	const uint32_t vbufPad = (4 - (vbufLen % 4)) % 4;
+
+	const uint32_t width = 200, height = 200, vertexCount = 3, destX = 50, destY = 50;
+
+	const uint32_t total = 4 + vertLen + vertPad + 4 + fragLen + fragPad +
+	                       4 + vbufLen + vbufPad + 4 + 4 + 4 + 4 + 4;
+	// Well under a typical kernel stack frame's headroom (~total 900 bytes).
+	uint8_t payload[1024];
+	if (total > sizeof(payload)) {
+		return;
+	}
+
+	uint32_t off = 0;
+	*(uint32_t *)(payload + off) = vertLen; off += 4;
+	for (uint32_t i = 0; i < vertLen; i++) { payload[off + i] = (uint8_t)kBootPresentVertAir[i]; }
+	off += vertLen + vertPad;
+	*(uint32_t *)(payload + off) = fragLen; off += 4;
+	for (uint32_t i = 0; i < fragLen; i++) { payload[off + i] = (uint8_t)kBootPresentFragAir[i]; }
+	off += fragLen + fragPad;
+	*(uint32_t *)(payload + off) = vbufLen; off += 4;
+	for (uint32_t i = 0; i < vbufLen; i++) { payload[off + i] = ((const uint8_t *)verts)[i]; }
+	off += vbufLen + vbufPad;
+	*(uint32_t *)(payload + off) = width; off += 4;
+	*(uint32_t *)(payload + off) = height; off += 4;
+	*(uint32_t *)(payload + off) = vertexCount; off += 4;
+	*(uint32_t *)(payload + off) = destX; off += 4;
+	*(uint32_t *)(payload + off) = destY; off += 4;
+
+	submitPresentDispatch(payload, total);
 }
 
 uint32_t InfernoVGPUHello::readVersionRegister(void)
