@@ -39,15 +39,44 @@ not just an isolated test-harness readback.
   bash-builtin workaround, which itself hasn't been tried against this
   specific test yet either).
 
-**Built, but NOT yet live-verified end to end:**
-- `INFERNO_VGPU_OP_PRESENT` — a real draw whose output gets blitted directly
-  into the guest's live display buffer (the actual on-screen framebuffer),
-  instead of read back to the caller. This is the concrete next step toward
-  "renders the interface". Full pipeline built: QEMU device model + display
-  pipe code + kernel method + guest-side trigger (now as a bash loadable
-  builtin, see below). **Kernel deployed as of this writing** (774
-  relocations, 13320-byte blob) but the actual on-screen result has not yet
-  been confirmed via screendump.
+**CONFIRMED WORKING, live, visually verified via QEMU screendump (2026-07-30):**
+- `INFERNO_VGPU_OP_PRESENT` renders and blits a real triangle (AIR→SPIR-V via
+  `metal2vulkan` → real GPU draw via `reims-vgpu` → RGBA→display-format
+  convert → `adp_v4_present_frame()`) directly into the guest's LIVE display
+  genpipe buffer — the actual framebuffer the real iOS display driver scans
+  out. **Screendump shows the red triangle rendered on top of the Apple boot
+  logo, on the actual emulated iPhone screen.** This is the first concrete
+  proof that Metal-rendered pixels can reach the real screen in this project.
+  - Trigger path: kernel-context only (bypasses the SIGKILL/sandbox maze
+    below entirely) — `InfernoVGPUHello::start()` spawns a detached kernel
+    thread (`kernel_thread_start`/`presentRetryThreadMain` in
+    `InfernoVGPUHello.cpp`) that retries `submitBootPresentDispatch()` every
+    3s (up to 100x/5min) until the display genpipe becomes active (~24-70
+    attempts observed in practice, i.e. well under a minute once boot
+    reaches that point), then switches to presenting every 1s **forever**
+    (does not stop) — required because a one-shot present gets overwritten
+    by the very next frame the real display driver draws, so without
+    continuous re-presenting the frame is visible for at most one frame and
+    isn't reliably catchable in an externally-timed screendump.
+  - This is NOT the real app-facing path — it's a fixed pair of hardcoded
+    test shaders (`vertex_passthrough`/`fragment_solid_red`), driven
+    entirely from kernel context, with no involvement of the real Metal
+    framework, CAMetalLayer, IOSurface, or WindowServer compositing. See
+    "Not started" below for what's still needed for real system-wide usage
+    (arbitrary apps' actual Metal calls, blur effects, etc.).
+  - Gotcha hit getting here: `resolve.py`/`patch_kernelcache.py`'s `KC`
+    path pointed at a long-gone prior session's `/tmp` scratchpad; silently
+    fell back to the wrong (IMG4-compressed) file when overridden naively,
+    producing garbage relocation targets with no clear error. Fixed: the
+    working decompressed kernelcache now lives at the durable
+    `InfernoData/kernelcache.decompressed` (both scripts default to it),
+    and `resolve.py` asserts the Mach-O magic byte up front.
+  - Gotcha: QEMU was observed to die silently (no crash/panic in its own
+    log, process just vanished) during a long unattended background wait
+    once this session — cause unconfirmed (possibly host/session idle
+    handling), not a kernelcache/guest-side bug. If a boot seems stuck with
+    the present-dispatch attempt count frozen, check `ps aux | grep
+    qemu-system` before assuming a guest-side hang.
 
 **Not started / explicitly out of scope so far:**
 - Real `.metallib` binary container parsing (only raw AIR `.ll` text
