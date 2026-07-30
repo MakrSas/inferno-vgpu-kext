@@ -102,6 +102,7 @@ extern "C" uint64_t kvtophys(uintptr_t va);
 // over a Unix socket by the QEMU device model.
 #define INFERNO_VGPU_OP_COMPUTE_DISPATCH 0x0002
 #define INFERNO_VGPU_OP_DRAW 0x0003
+#define INFERNO_VGPU_OP_PRESENT 0x0004
 
 class InfernoVGPUHello : public IOService
 {
@@ -129,6 +130,12 @@ public:
 	// ringBase()+12 directly (no per-field offset math needed, unlike
 	// compute's buffer-in-place convention).
 	uint32_t submitDrawDispatch(const uint8_t *payload, uint32_t payloadLen);
+	// Same idea, opcode INFERNO_VGPU_OP_PRESENT: payload is identical to
+	// submitDrawDispatch's, plus a trailing dest_x/dest_y (see
+	// inferno-vgpu.h). Unlike compute/draw, the device does NOT write
+	// anything back into the ring -- the rendered frame goes straight to the
+	// live display genpipe instead. Only LAST_STATUS matters to the caller.
+	uint32_t submitPresentDispatch(const uint8_t *payload, uint32_t payloadLen);
 	static volatile uint8_t *ringBase(void) { return (volatile uint8_t *)FIFO_TEST_RING_ADDR; }
 
 private:
@@ -279,6 +286,11 @@ uint32_t InfernoVGPUHello::submitDrawDispatch(const uint8_t *payload, uint32_t p
 	return submitPacket(INFERNO_VGPU_OP_DRAW, payload, payloadLen);
 }
 
+uint32_t InfernoVGPUHello::submitPresentDispatch(const uint8_t *payload, uint32_t payloadLen)
+{
+	return submitPacket(INFERNO_VGPU_OP_PRESENT, payload, payloadLen);
+}
+
 class InfernoVGPUUserClient : public IOUserClient
 {
 	OSDeclareDefaultStructors(InfernoVGPUUserClient)
@@ -299,6 +311,8 @@ public:
 	                                   IOExternalMethodArguments *arguments);
 	static IOReturn sDrawDispatch(InfernoVGPUUserClient *target, void *reference,
 	                                IOExternalMethodArguments *arguments);
+	static IOReturn sPresentDispatch(InfernoVGPUUserClient *target, void *reference,
+	                                   IOExternalMethodArguments *arguments);
 
 private:
 	InfernoVGPUHello *fProvider;
@@ -310,6 +324,7 @@ enum {
 	kInfernoVGPUMethodGetVersion = 0,
 	kInfernoVGPUMethodComputeDispatch = 1,
 	kInfernoVGPUMethodDrawDispatch = 2,
+	kInfernoVGPUMethodPresentDispatch = 3,
 	kInfernoVGPUMethodCount
 };
 
@@ -331,6 +346,11 @@ static const IOExternalMethodDispatch sInfernoVGPUMethods[kInfernoVGPUMethodCoun
 	  kIOUCVariableStructureSize, 0, kIOUCVariableStructureSize },
 	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sDrawDispatch, 0,
 	  kIOUCVariableStructureSize, 0, kIOUCVariableStructureSize },
+	// sPresentDispatch: variable-size structure input, no structure output
+	// (nothing comes back into guest memory -- the frame goes straight to
+	// the display), 1 scalar output (LAST_STATUS, 0 = ok).
+	{ (IOExternalMethodAction)&InfernoVGPUUserClient::sPresentDispatch, 0,
+	  kIOUCVariableStructureSize, 1, 0 },
 };
 
 bool InfernoVGPUUserClient::initWithTask(task_t owningTask, void *securityID,
@@ -510,6 +530,35 @@ IOReturn InfernoVGPUUserClient::sDrawDispatch(InfernoVGPUUserClient *target,
 	} else {
 		arguments->structureOutputSize = 0;
 	}
+
+	return (status == 0) ? kIOReturnSuccess : kIOReturnIOError;
+}
+
+// Input wire format (inferno-vgpu.h): identical to sDrawDispatch's, plus a
+// trailing dest_x/dest_y. Kicks a real INFERNO_VGPU_OP_PRESENT through the
+// provider -- the device renders and blits the result straight onto the
+// live display genpipe itself, so there is nothing to copy back here, only
+// the resulting status.
+IOReturn InfernoVGPUUserClient::sPresentDispatch(InfernoVGPUUserClient *target,
+                                                   void *reference,
+                                                   IOExternalMethodArguments *arguments)
+{
+	if (target == NULL || target->fProvider == NULL) {
+		return kIOReturnNotReady;
+	}
+
+	const uint8_t *in = (const uint8_t *)arguments->structureInput;
+	uint32_t inSize = arguments->structureInputSize;
+	// Smallest legal payload: vert_air_len(4)+frag_air_len(4)+vbuf_len(4)
+	// (each possibly 0) + width+height+vertex_count+dest_x+dest_y (20).
+	if (in == NULL || inSize < 32) {
+		return kIOReturnBadArgument;
+	}
+
+	uint32_t status = target->fProvider->submitPresentDispatch(in, inSize);
+
+	arguments->scalarOutput[0] = status;
+	arguments->scalarOutputCount = 1;
 
 	return (status == 0) ? kIOReturnSuccess : kIOReturnIOError;
 }

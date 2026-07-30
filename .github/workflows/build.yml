@@ -236,6 +236,16 @@ jobs:
             -o out4/inferno_compute_dispatch_test src/userspace_test/inferno_compute_dispatch_test.c
           file out4/inferno_compute_dispatch_test
 
+      - name: "Compile the present-dispatch test binary (real userspace, not -mkernel)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" \
+            -framework IOKit -framework CoreFoundation \
+            -o out4/inferno_present_dispatch_test src/userspace_test/inferno_present_dispatch_test.c
+          file out4/inferno_present_dispatch_test
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
