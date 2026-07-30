@@ -3,15 +3,15 @@
     "sectname": "__text",
     "segname": "__TEXT",
     "addr": 0,
-    "size": 4756,
+    "size": 7444,
     "offset": 712,
-    "reloff": 10912,
-    "nreloc": 117
+    "reloff": 13648,
+    "nreloc": 125
   },
   {
     "sectname": "__common",
     "segname": "__DATA",
-    "addr": 10200,
+    "addr": 12936,
     "size": 80,
     "offset": 0,
     "reloff": 0,
@@ -20,37 +20,37 @@
   {
     "sectname": "__const",
     "segname": "__DATA",
-    "addr": 4760,
-    "size": 5256,
-    "offset": 5472,
-    "reloff": 11848,
-    "nreloc": 643
+    "addr": 7448,
+    "size": 5304,
+    "offset": 8160,
+    "reloff": 14648,
+    "nreloc": 645
   },
   {
     "sectname": "__cstring",
     "segname": "__TEXT",
-    "addr": 10016,
+    "addr": 12752,
     "size": 166,
-    "offset": 10728,
+    "offset": 13464,
     "reloff": 0,
     "nreloc": 0
   },
   {
     "sectname": "__mod_init_func",
     "segname": "__DATA",
-    "addr": 10184,
+    "addr": 12920,
     "size": 8,
-    "offset": 10896,
-    "reloff": 16992,
+    "offset": 13632,
+    "reloff": 19808,
     "nreloc": 1
   },
   {
     "sectname": "__mod_term_func",
     "segname": "__DATA",
-    "addr": 10192,
+    "addr": 12928,
     "size": 8,
-    "offset": 10904,
-    "reloff": 17000,
+    "offset": 13640,
+    "reloff": 19816,
     "nreloc": 1
   }
 ]

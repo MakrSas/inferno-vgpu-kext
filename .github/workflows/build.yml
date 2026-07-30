@@ -398,6 +398,16 @@ jobs:
             -o out8/agx_metal_api_draw_test src/userspace_test/agx_metal_api_draw_test.m
           file out8/agx_metal_api_draw_test
 
+      - name: "Compile agx_system_metal_test.m (system-wide proof: plain MTLCreateSystemDefaultDevice(), no dlopen/dlsym -- relies entirely on the deployed block_invoke patch)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal \
+            -o out8/agx_system_metal_test src/userspace_test/agx_system_metal_test.m
+          file out8/agx_system_metal_test
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
