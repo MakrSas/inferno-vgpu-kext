@@ -2278,6 +2278,323 @@ succeeded, connection=0x140b` / `result = 42 (expect 42)`, exit 0). GDB
 breakpoints were fully removed at the end of the final successful capture
 run before the `finally`-block QMP `cont`.
 
+### UPDATE 2026-07-31 (new session): read dyld's own real source for the
+### first time — a concrete, source-grounded hypothesis (launch-closure
+### building, scaling with dependency-graph size), NOT yet live-verified
+
+**Hard constraint honored throughout**: this was a source-reading-only
+session. Per explicit instruction, the live guest was **never touched** —
+serial console (4444), QMP socket, and GDB port (1234) were all left
+completely alone the whole session, because a different, concurrent session
+had exclusive claim on the live guest for an unrelated live-debugging task.
+Everything below comes from reading this repo's own existing source/history
+and real Apple open-source code fetched from GitHub. No kernel-side or
+userspace-side project files were changed.
+
+**Picking the right dyld source tag.** This project's xnu source (`osfmk/
+kern/mach_loader.c`, `osfmk/arm64/sleh.c`, already used throughout the two
+update sections above) comes from `apple-oss-distributions/xnu` tag
+`xnu-7195.50.7.100.1`. `apple-oss-distributions/dyld` has never been fetched
+by this project before. Rather than guess from version-number proximity,
+checked the actual **tag timestamps** via `gh api`: `xnu-7195.50.7.100.1`'s
+tag object was created at `2020-11-19T01:08:12Z`. Enumerating `dyld`'s ~70
+tags and checking timestamps for the ones in the right numeric range found
+**`dyld-832.7.1`, tagged at `2020-11-19T01:06:42Z`** — 90 seconds before the
+xnu tag, both clearly minted by the same automated "Apple OSS Distributions"
+bot account as part of the same source-drop event. This is about as strong a
+same-build confirmation as is available without an actual build-number
+manifest, and far more rigorous than picking the numerically-closest tag by
+guesswork. **All source below is `apple-oss-distributions/dyld` tag
+`dyld-832.7.1` (commit `e93f005b86145786b6ef986f2814dce5489acdbe`)** — full
+shallow clone kept locally this session for reference at
+`scratchpad/dyld_full/` (not committed — recreate via `git clone --depth 1
+--branch dyld-832.7.1 https://github.com/apple-oss-distributions/dyld.git`
+if a future session needs it again).
+
+**The bootstrap chain, confirmed from source, start to finish.**
+`src/dyldInitialization.cpp`'s `dyldbootstrap::start()` — the very first C++
+code the kernel's initial PC actually runs (per the previous update's own
+`mach_loader.c` finding) — does `rebaseDyld(dyldsMachHeader)` (dyld fixing up
+its **own** internal pointers via its chained-fixups, identical for every
+process, not app-specific) and then falls straight into `dyld::_main(...)`
+(`src/dyld2.cpp`, ~line 6340). `_main()` does a long sequence of environment/
+platform setup, then (line 6674 area) determines `sClosureMode` — for iOS
+this resolves to `ClosureMode::On` via `getPlatformDefaultClosureMode()`
+(dyld3/closures are mandatory on embedded platforms, not optional). It then
+(line 6708-6752) tries, **in order**: (1) `sSharedCacheLoadInfo.loadAddress->
+findClosure(sExecPath)` — a closure already baked into the dyld_shared_cache
+itself, keyed by the executable's own path; (2) `findCachedLaunchClosure()` —
+an on-disk closure cache file for this specific binary from a previous launch;
+(3) **`buildLaunchClosure()`** (line 6147) — build one from scratch, in-process,
+right now. For every one of this project's ad-hoc, `scp`'d, never-through-
+`installd`, unsigned test binaries (`/agx_system_metal_test`,
+`/mapkit_snapshotter_test`, ...), **(1) and (2) are certain to miss** — the
+shared cache's own closure table only knows about binaries that existed when
+the cache was built (system binaries), and there is no on-disk closure cache
+entry for a binary that has never been launched via the real app-install
+pipeline. **This confirms the task's own starting theory directly from
+source**: these binaries are guaranteed to fall through to the "build a
+closure on the fly, in-process, at launch time" path, every single time.
+
+**`buildLaunchClosure()` → `ClosureBuilder::makeLaunchClosure()`
+(`dyld3/ClosureBuilder.cpp:3081`) — read in full.** Its very first lines
+(3086-3093) declare the closure-builder's working storage as **plain,
+fixed-size C arrays living on `makeLaunchClosure`'s own stack frame**:
+```cpp
+BuilderLoadedImage  loadImagesStorage[512];
+Image::LinkedImage  dependenciesStorage[512*8];   // = 4096
+InterposingTuple    tuplesStorage[64];
+Closure::PatchEntry cachePatchStorage[64];
+_loadedImages.setInitialStorage(loadImagesStorage, 512);
+_dependencies.setInitialStorage(dependenciesStorage, 512*8);
+```
+`_loadedImages` and `_dependencies` are member fields, declared
+(`dyld3/ClosureBuilder.h:333-334`) as:
+```cpp
+OverflowSafeArray<BuilderLoadedImage,2048>  _loadedImages;
+OverflowSafeArray<Image::LinkedImage,65536> _dependencies;   // all dylibs in cache need ~20,000 edges
+```
+`OverflowSafeArray<T,MAXCOUNT>` (`dyld3/Array.h:108-182`, fetched and read in
+full) starts using exactly the stack storage handed to it via
+`setInitialStorage()`. If a `push_back()` would exceed current capacity,
+`verifySpace()`→`growTo()` fires: because a non-default `MAXCOUNT` is
+specified for both of these fields, `growTo()` takes the "jump straight to
+`max(MAXCOUNT, n)` and `vm_allocate()` a brand-new heap buffer, `memcpy` the
+old contents over, then (if there *was* a previous `vm_allocate`'d buffer —
+i.e. this isn't the very first growth) `vm_deallocate()` it" branch — guarded
+by `assert(oldBufferSize == 0); // only re-alloc once`, an assert that
+compiles to nothing in a release/NDEBUG build (Apple's own comment
+literally documents the "only re-alloc once" assumption baked into this
+data structure).
+
+**The actual recursive walk: `ClosureBuilder::recursiveLoadDependents()`
+(`dyld3/ClosureBuilder.cpp:786`), called directly from `makeLaunchClosure`
+at line 3180.** Read in full. For the image passed in, it walks that
+image's own `LC_LOAD_DYLIB`-equivalent list via `forEachDependentDylib`,
+`push_back()`-ing one `Image::LinkedImage` per dependency edge into the
+**single, shared, whole-process-wide** `_dependencies` array (line 807/810),
+then (line 876) does:
+```cpp
+forImageChain.image.dependents = _dependencies.subArray(startDepIndex, depIndex);
+```
+— `subArray()` (`dyld3/Array.h:74-75`) does **not** copy; it returns a new
+`Array<T>` object that is a raw pointer **view** into `_dependencies`'s
+*current* backing buffer. The very next thing the function does (line
+879-891) is iterate that view and, for each entry, **recursively call itself
+again** — which will `push_back()` more entries onto that same shared
+`_dependencies` array from deeper in the call stack, **while the outer
+frame's `for` loop is still actively iterating its own already-taken view of
+it**. Critically — checked directly, not assumed — **there is no shortcut
+for images already resident in the dyld_shared_cache here**: grepping the
+whole file for every assignment to `.dependents` found exactly one site for
+the real on-device (`BUILDING_DYLD`) path, this one at line 876; the only
+other assignment (`entry.dependents = image->dependentsArray();`, line 3405)
+is inside `makeOtherDylibsImageArray()`, compiled only under `#if
+BUILDING_CACHE_BUILDER` — the **offline** cache-building tool, never part of
+the on-device dyld binary at all. So on a real device, **every single node
+in the entire transitive dependency graph — including every ordinary
+cache-resident system dylib — gets its own fresh `recursiveLoadDependents()`
+call and its own fresh walk of its real load-command list**, every time an
+on-the-fly launch closure is built. (Direct, telling contrast: the
+ObjC-selector/class optimizer, `optimizeObjC()`, a few hundred lines later
+in the same file, explicitly *does* skip cache-resident images — its own
+comment says so verbatim: `// Skip shared cache images as even if they need
+a new closure, the objc runtime can still use the optimized shared cache
+tables.` This proves Apple's own engineers were well aware of, and
+deliberately avoided, the "re-walk the whole cache-resident graph" cost in
+at least one sibling subsystem — but `recursiveLoadDependents`'s own
+node/edge bookkeeping has no equivalent skip.)
+
+**Why this is a plausible, size-scaling crash mechanism — and why it fits
+the specific empirical fault signature already captured better than a plain
+stack-overflow theory would.** Two related, honestly-ranked candidates:
+
+1. **(Weaker, but real and uncapped) Native C++ recursion depth.**
+   `recursiveLoadDependents` has no depth cap, no iterative/worklist
+   rewrite, and each frame captures an Objective-C block literal (the
+   `forEachDependentDylib` callback) plus a `LoadedImageChain` — real stack
+   cost per node in the graph. Rough estimate: real framework dependency
+   graphs tend to be wide, not deep (rarely more than a dozen or so hops for
+   even "heavy" frameworks), so pure depth alone probably wouldn't blow a
+   normal multi-MB thread stack — this is the less independently-convincing
+   of the two candidates, flagged mainly because it's real, present in the
+   exact same function, and cheap to rule in/out live (see recipe below).
+   Worth an explicit, cheap cross-check: whether this project's own kernel
+   patches changed anything about the default initial-thread stack size for
+   a freshly-`execve()`'d process on this specific build (checkable directly
+   from `bsd/kern/kern_exec.c` in the same already-fetched xnu tag) —
+   not yet done this session.
+2. **(Stronger candidate) A stale/dangling view into `_dependencies` (or
+   `_loadedImages`) read after a second or later reallocation actually
+   `vm_deallocate`s the buffer it points into.** The *first* ever growth
+   (stack `dependenciesStorage[4096]` → heap) does **not** immediately
+   crash anything by itself — the abandoned stack array is a local of
+   `makeLaunchClosure`'s own frame, which stays alive/mapped for the whole
+   recursive walk, so a stale view into it just silently reads frozen-old
+   data (a correctness bug, not a fault). The genuinely fault-capable case
+   is a **second** growth (needing `_dependencies` to exceed its
+   already-large `65536` floor, or `_loadedImages` to exceed `2048`) —
+   from that point on, `growTo()`'s `if (oldBuffer != 0) vm_deallocate(...)`
+   branch actually unmaps memory that an **outer, still-executing**
+   recursion frame may still hold a live pointer/subArray view into (exactly
+   the pattern at lines 876/879/888). The next read through that stale view
+   lands on genuinely unmapped memory → a clean EL0 data-abort translation
+   fault. This maps precisely onto what's already been captured live, twice,
+   independently: `esr=0x92000047` (`ESR_EC=0x24`/`DFSC=0x07`, translation
+   fault at level 3 — "this address was never mapped," not a permission
+   fault) in both the original `agx_system_metal_test` sweep and the
+   `mapkit_snapshotter_test` sweep documented above. More tellingly: the one
+   fully-captured hit from the MapKit session had **`pc=0x18d40b24c`**
+   (inside dyld's own code, as already established) but **`far=0x16d6d3f10`**
+   — a *wildly different, unrelated* address region, not a value anywhere
+   near what `pc`'s own mapping or a plausible nearby stack pointer would be.
+   A classic stack-guard-page overflow's fault address is essentially always
+   immediately adjacent to the current `sp` (within one page); a stale
+   pointer into memory that was `vm_deallocate()`'d can legitimately point
+   *anywhere* in the address space. The one real data point in hand fits
+   "wild/stale pointer" qualitatively better than "stack exhaustion" — worth
+   stating honestly as **reasoning from one data point, not proof**: `sp`
+   itself was never captured alongside `pc`/`far` in either prior session
+   (only `pc`/`cpsr`/`far`/`esr` at their known `arm_saved_state64` offsets
+   were read), which the recipe below fixes.
+   Honest caveat on the numbers: reaching >65536 total dependency edges (or
+   >2048 distinct images) for **one process's** launch closure seems like a
+   lot even for MapKit — Apple's own comment says the *entire* shared
+   cache needs "only" ~20,000 edges. It's plausible the real threshold that
+   matters is lower than 65536/2048, via some *other* un-capped-MAXCOUNT
+   (i.e. plain-doubling, not one-time-jump) `OverflowSafeArray` elsewhere in
+   the same call graph that re-allocates (and thus `vm_deallocate`s) far more
+   readily — a doubling array hits its second-and-later, `vm_deallocate`-
+   triggering growth at a much lower absolute count than a `MAXCOUNT`-floored
+   one does. This session surveyed every `STACK_ALLOC_(OVERFLOW_SAFE_)ARRAY`
+   call site in `ClosureBuilder.cpp` (full list kept in this session's
+   scratch notes) and `_dependencies`/`_loadedImages` were the clearest,
+   best-fitting match found for "scales with total transitive graph size,
+   on the real launch path, with no cache-resident shortcut" — but this is
+   not represented as an exhaustive proof no smaller-threshold sibling
+   array exists.
+
+**One specific alternative theory explicitly checked and NOT supported by
+source: dyld tripping over the missing `LC_CODE_SIGNATURE`/entitlements
+itself.** The task's own prompt raised this as a plausible angle, so it was
+checked directly rather than assumed away: `ClosureBuilder::buildImage()`
+(`dyld3/ClosureBuilder.cpp:981-998`) handles a signature-less Mach-O
+completely gracefully —
+```cpp
+if ( macho->hasCodeSignature(codeSigFileOffset, codeSigSize) ) {
+    writer.setCodeSignatureLocation(codeSigFileOffset, codeSigSize);
+    ...
+}
+```
+a plain, well-formed conditional, not an unchecked assumption of presence.
+This doesn't rule out every code-signature-adjacent check in the whole
+`dyld3`/`dyld2` source (not exhaustively audited this session), but the one
+most directly on the launch-closure-build path for the main executable
+itself is clean. This makes the dependency-graph-size angle above the
+better-supported lead of the two the task suggested chasing.
+
+**Confidence ranking, stated honestly.** Moderate, not proven. What's solid:
+(a) these binaries are certain, from source, to hit the on-the-fly
+closure-build path every launch; (b) `recursiveLoadDependents`'s walk
+genuinely has no cache-resident shortcut and genuinely scales with total
+transitive graph size, confirmed by contrast with a sibling subsystem that
+does have such a shortcut; (c) the specific `OverflowSafeArray` growth/
+`vm_deallocate` mechanism is a real, reproducible-in-principle hazard
+pattern in this exact real Apple source, not a speculative pattern invented
+for this write-up; (d) the one existing live fault capture's `pc`/`far`
+relationship is qualitatively consistent with "stale pointer into unmapped
+memory" and not obviously consistent with "stack guard page." What's
+**not** yet shown: that the actual edge/image counts for Metal.framework's
+or MapKit.framework's real transitive closures on this exact build cross
+any of the specific thresholds identified, or that this mechanism (as
+opposed to the recursion-depth candidate, or something else in dyld
+entirely not surveyed this session) is what's actually firing. This is
+genuinely a hypothesis to test, not a diagnosis.
+
+**Concrete, ready-to-execute live-verification recipe for whoever has guest
+access next** (ordered cheapest/most-discriminating first, all built on
+tooling this project already has working — no `ipsw`, no new symbol
+resolution required for step 1):
+
+1. **Re-run the existing `handle_user_abort` capture (`run_mapkit_test_
+   abort_only.py` or the `agx_system_metal_test` equivalent from the update
+   above — both already built, already proven to catch this crash), but
+   additionally read and record `sp` (general-purpose register read via the
+   RSP `g` command, not just the `arm_saved_state64` struct offsets already
+   used for `pc`/`cpsr`/`far`/`esr`) on the one genuinely-isolated hit.**
+   Compare `far` to `sp`: within ~1 page (`0x4000` on this build) is
+   consistent with classic stack-guard-page exhaustion (candidate 1 above);
+   wildly different (as the existing single `pc`/`far` pair already
+   suggests) is consistent with a stale-pointer/`vm_deallocate` read
+   (candidate 2). This alone, with zero new addresses or symbols, is the
+   single highest-value/lowest-cost next step and directly discriminates
+   between this update's two candidates.
+2. **Test the `OverflowSafeArray`-growth theory directly**: breakpoint the
+   `vm_deallocate` Mach trap (a well-known fixed syscall, reachable the same
+   way this project already located the `dlopen`/`dlsym` stub addresses for
+   the Metal-patch work — no dyld symbol table needed) during a triggered
+   `/agx_system_metal_test` or `/mapkit_snapshotter_test` run. If it fires
+   at all before the crash, capture its `lr` (the same two-phase LR-capture
+   technique used throughout the SIGKILL investigation) and check whether it
+   points back into the already-established `~0x184000000`-`~0x1eeffffff`
+   dyld-private-mapping range. A `vm_deallocate` call originating from
+   inside dyld's own mapping shortly before the fault would be strong,
+   near-conclusive support for candidate 2.
+3. **Localize the exact faulting instruction without needing dyld's own
+   (very likely stripped, per this project's own already-documented
+   `ipsw`-gap reasoning) symbol table**: `/usr/lib/dyld` is a real,
+   standalone on-disk Mach-O (not purely dyld_shared_cache-resident — same
+   `dd`/`od` + `grep -a` technique already proven on `backboardd` in the
+   App-level investigation section above applies directly, no `ipsw`
+   needed). Determine dyld's own runtime load bias for one specific
+   triggered run either by (a) scanning backward from the captured `pc` in
+   page-sized (`0x4000`) steps via live GDB memory reads until the Mach-O
+   magic `0xfeedfacf` is found (reusing the same "assert the magic byte up
+   front" idiom `resolve.py` already established for the kernelcache), or
+   (b) breakpointing `load_dylinker()` in `mach_loader.c` (already fetched/
+   quoted in the update above, `dyld_aslr_page_offset` around line 531 of
+   that file) to read the computed slide directly from kernel state at
+   image-load time. Compute `fileOffset = pc - dyldLoadVA`, `dd`/`od` dump
+   `/usr/lib/dyld` at that offset, disassemble with this project's own
+   `mini_disasm.py`. Cross-reference against the concrete constants this
+   session's source read predicts should appear nearby if candidate 2 is
+   right: an immediate load of `0x1000` (4096) or `0x10000` (65536) (the
+   `_dependencies` capacity constants), `0x200`(512)/`0x800`(2048) (the
+   `_loadedImages` capacity constants), or a `bl`/`blr` to a `vm_allocate`/
+   `vm_deallocate`/`memcpy` stub.
+4. **If (1)-(3) point away from candidate 2, test candidate 1 directly**:
+   breakpoint `recursiveLoadDependents`'s own entry (locatable the same way
+   as step 3, once dyld's file offset math is established) and count
+   entries-without-matching-returns (live recursion depth) during a
+   triggered run, using the same "don't touch/step an unrecognized stop"
+   SMP-safety discipline this doc's methodology notes already mandate for
+   this exact multi-vCPU target. Correlate peak depth against the fault.
+5. **Cheap, independent, complementary check regardless of which candidate
+   wins**: read this project's own patched kernelcache's actual configured
+   default stack size for a freshly-`execve()`'d process's initial thread
+   (`bsd/kern/kern_exec.c`, same xnu tag already used throughout this doc)
+   and sanity-check it against a real device's known default — a two-minute
+   source cross-check, cheap enough to do regardless of which theory the
+   live data ends up supporting, and directly load-bearing for candidate 1
+   specifically if this project's own kernel patches (5 SIGKILL gates,
+   `block_invoke` patch) turn out to have touched anything relevant (not
+   expected, per what those patches actually do, but not yet independently
+   confirmed either).
+
+Full local copy of the fetched dyld source (`dyld-832.7.1`) used for this
+update — `src/dyldInitialization.cpp`, `src/dyld2.cpp`,
+`dyld3/ClosureBuilder.cpp`/`.h`, `dyld3/Array.h`, `dyld3/Closure.h`,
+`dyld3/AllImages.cpp`, `dyld3/Loading.cpp`, `dyld3/SharedCacheRuntime.cpp`,
+plus the full shallow clone — lived only in this session's scratchpad, not
+committed to this repo (same convention as this project's other
+scratch-only tooling, e.g. `mini_disasm.py`'s intermediate dumps);
+regenerate via the `git clone` command above if needed again.
+
+No guest state was touched this session (confirmed by construction, not by
+after-the-fact check, since no guest connection was ever opened): QMP, GDB,
+and the serial console were never used. This entire update is source
+research only.
+
 ## CRITICAL: the SIGKILL mystery and its workaround
 
 **Every freshly-transferred, unsigned MAIN EXECUTABLE binary on the guest
