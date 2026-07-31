@@ -4538,3 +4538,448 @@ goal doesn't require the app to open at all.
 **Environment left clean**: same as above, re-verified after this window
 too (`/sigkill_test`/`/compute_test`/`info status` all clean, guest running
 on this fresh boot, no dangling GDB state).
+
+## WidgetKit `chronod` XPC protocol: real ObjC metadata parsing + a real responder implementation, live test cut short by host shutdown (2026-07-31, new session)
+
+Direct continuation of two threads that converged this session: the
+DSC-parser session's own "Backlog question answered: WidgetKit's real
+extension-registration protocol" findings (`HostToExtensionXPCInterface`/
+`ExtensionToHostXPCInterface`, `chronod`, `ChronoServices`), and the
+widget-hosting live-test session's own conclusion that a real responder
+needs "an `NSXPCListener` implementing `ExtensionToHostXPCInterface` and
+consuming `HostToExtensionXPCInterface` calls for at least
+`getDescriptors`/`getTimeline`... over a `com.apple.chronod`-reachable
+channel." This session did exactly that: extended `dsc_parse.py` to parse
+real ObjC method signatures (not just addresses) out of the DSC, used it
+to get the real selectors and type-encoding strings for
+`HostToExtensionXPCInterface`, implemented a real `NSXPCListener`-based
+responder using them, built it via CI, and live-tested it on the guest.
+Two parts, in the order the task itself specified.
+
+### Part 1: `dsc_parse.py` gains real ObjC metadata parsing
+
+**Struct-layout source, fetched fresh this session (not from memory), per
+this task's own explicit instruction.** `apple-oss-distributions/objc4`
+tag **`objc4-818.2`** (`runtime/objc-runtime-new.h`, fetched via
+`raw.githubusercontent.com`, same technique already proven for `xnu`/
+`dyld` elsewhere in this doc). Tag-selection reasoning, recorded honestly
+since it's a real inexactness rather than the clean 90-second match `dyld`
+got: this project's pinned `xnu`/`dyld` pair (`xnu-7195.50.7.100.1`/
+`dyld-832.7.1`) were both tagged `2020-11-19T01:0[6-8]:xxZ`. `objc4` was
+**not** re-tagged the same day — the two bracketing candidates are
+`objc4-787.1` (tagged `2020-05-01`, ~202 days *before*) and `objc4-818.2`
+(tagged `2020-12-22`, ~33 days *after*). `818.2` is the nearer match by a
+wide margin and is what this session used; recorded explicitly as an
+approximation, not a proven-exact match, in case a future session needs to
+revisit this if something doesn't line up.
+
+**What was transcribed**: `method_t` (`big`/pointer-based vs. `small`/
+relative-offset representations, gated by `method_t::smallMethodListFlag`
+= `0x80000000` in a method list's `entsizeAndFlags` header field),
+`method_list_t`/`entsize_list_tt<>` (generic length-prefixed array header:
+`uint32_t entsizeAndFlags; uint32_t count;`, `entsize()` = `entsizeAndFlags
+& ~FlagMask`), `protocol_t` (a fixed 13-pointer/int-field layout:
+`isa, mangledName, protocols, instanceMethods, classMethods,
+optionalInstanceMethods, optionalClassMethods, instanceProperties, size,
+flags, extendedMethodTypes, demangledName, classProperties`),
+`class_ro_t`, `ivar_t`/`ivar_list_t`, `property_t`/`property_list_t`, and
+`RelativePointer<T>` (a 32-bit signed offset stored at, and added to, its
+*own* field address — not the enclosing struct's address).
+
+**PAC/pointer-tag handling — confirmed empirically, not assumed either
+way, per this task's explicit instruction.** Every raw 64-bit pointer
+field read directly out of this DSC's `__DATA`/`__DATA_CONST` bytes is
+**not** a plain VA. Validated by cross-checking three independent fields
+of one real `protocol_t` against independently-known-correct addresses:
+- `mangledName`'s raw value (`0x100001c10431c0`) masked to the low 51 bits
+  (`raw & ((1<<51)-1)`) gives `0x1c10431c0` — which is *exactly* the file
+  offset (converted to VA via this cache's own mapping table) where the
+  literal C string `"_TtP9WidgetKit27HostToExtensionXPCInterface_"` was
+  independently found via a raw byte search.
+- `instanceMethods`'s raw value (`0x300001d3d04c68`), masked the same way,
+  gives `0x1d3d04c68` — which exactly matches the address
+  `dsc_parse.py`'s own pre-existing local-symbols-table lookup
+  independently gives for that method list's own
+  `__PROTOCOL_INSTANCE_METHODS__TtP9WidgetKit27HostToExtensionXPCInterface_`
+  symbol.
+- `_extendedMethodTypes`'s raw value, same treatment, matches its own
+  `__PROTOCOL_METHOD_TYPES__...` local symbol address exactly too.
+
+Three independent fields, three independent cross-checks (a literal string
+search and two local-symbol-table lookups), all agreeing: masking to the
+low 51 bits recovers the real VA. The discarded top 13 bits line up
+exactly with dyld's own on-disk `dyld_cache_slide_pointer3` **"plain"**
+pointer encoding (11-bit `offsetToNextPointer` + 2 unused bits) — i.e.
+these are raw, not-yet-chain-walked chained-fixup pointers, **not**
+arm64e ptrauth-signed pointers; no actual PAC/signature computation was
+needed, only a mask (`strip_ptr()` in `dsc_parse.py`). This also
+empirically confirms (not just cites) this project's existing "KASLR-off +
+non-slid-DSC" finding: a chain-walk/rebase pass genuinely isn't needed
+here, since masking alone already gives the final, current, correct VA.
+
+**Method-list format — checked empirically per-list, not assumed either
+way, per this task's explicit instruction.** This task's own brief
+expected small/relative method lists to be the more likely case for an
+iOS-14-era cache. Checked directly for the concrete target
+(`HostToExtensionXPCInterface`'s `instanceMethods`, `entsizeAndFlags =
+0x1b`): `entsize = 0x1b & 0x0000fffc = 24` = `sizeof(method_t::big)` (3
+real 8-byte pointers), and the `smallMethodListFlag` bit (`0x80000000`) is
+**not** set. **This specific list is the classic "big" pointer-based
+format, not small/relative** — worth recording as a real correction to
+that expectation, not a confirmation of it. (Small-list decoding is still
+implemented in `dsc_parse.py._method_list()`, since other lists elsewhere
+in this cache may well use it — just not exercised against a real small
+list this session, flagged honestly in that function's own comment rather
+than silently assumed correct.)
+
+**New `dsc_parse.py` commands** (both reusing the existing `DSC` class's
+`vm_to_file`/local-symbols/export-trie infrastructure, no new top-level
+parsing pass):
+```
+python3 dsc_parse.py objc-protocol <image-substring> <name-substring>
+python3 dsc_parse.py objc-class    <image-substring> <name-substring>
+```
+`objc-protocol` walks an image's local-symbols table for
+`__PROTOCOL__<mangled-name>` labels, parses each hit as a real
+`protocol_t`, and prints every required/optional method's selector, its
+plain `types` string, and its richer block-aware `_extendedMethodTypes`
+string (needed because a method's plain `types` field encodes a block
+parameter only as `@?`, with no information about the block's *own*
+signature — `_extendedMethodTypes` is what actually spells out
+`<v@?@"NSArray">`-shaped block signatures, which is exactly the extra
+fidelity an `NSXPCInterface`-compatible responder needs to correctly
+handle completion-handler-shaped methods). `objc-class` resolves
+`_OBJC_CLASS_$_<Name>` (local + exported), follows `isa`→`bits`→
+`class_ro_t` (masked with the real arm64e `FAST_DATA_MASK =
+0x00007ffffffffff8`, best-effort: only handles the common shared-cache
+case where `bits` still points directly at `class_ro_t`, i.e. an
+un-"realized" class, not `class_rw_t` — documented as a real limitation,
+not silently assumed to always work), and prints methods, ivars
+(`ivar_t.offset` is itself an indirect `int32_t*` — dereferenced through
+one more `vm_to_file` hop, not just printed as a raw pointer), and
+properties (with their real encoded `attributes` strings, e.g.
+`T@"NSString",R,C,N,V_kind`).
+
+### Part 1 findings: the real `HostToExtensionXPCInterface`/`ExtensionToHostXPCInterface` contract
+
+`python3 dsc_parse.py objc-protocol WidgetKit.framework/WidgetKit
+HostToExtensionXPCInterface` (run against 3 independent on-disk copies of
+the same protocol, all agreeing exactly, just in different method order —
+Swift/ObjC compilation evidently doesn't always coalesce redundant
+per-translation-unit `protocol_t` emissions within one image, a real,
+previously-undocumented structural quirk of this cache worth knowing for
+future sessions using this same tool) gives **7 required instance
+methods**, all in the classic "big" method-list format:
+
+| selector | plain `types` | `_extendedMethodTypes` (block-aware) |
+|---|---|---|
+| `invalidate` | `v16@0:8` | `v16@0:8` |
+| `performCleanup` | `v16@0:8` | `v16@0:8` |
+| `getDescriptorsWithCompletion:` | `v24@0:8@?16` | `v24@0:8@?<v@?@"NSArray">16` |
+| `getPlaceholdersWithEnvironment:for:completion:` | `v40@0:8@16@24@?32` | `v40@0:8@"CHKWidgetEnvironment"16@"NSDictionary"24@?<v@?@"NSError">32` |
+| `handleURLSessionEventsFor:completion:` | `v32@0:8@16@?24` | `v32@0:8@"NSString"16@?<v@?>24` |
+| `attachPreviewAgentWithFrameworkPath:endpoint:handler:` | `v40@0:8@16@24@?32` | `v40@0:8@"NSString"16@24@?<v@?@"BSAuditToken">32` |
+| `getTimelineFor:into:environment:isPreview:completion:` | `v52@0:8@16@24@32B40@?44` | `v52@0:8@"CHSWidget"16@"NSFileHandle"24@"CHKWidgetEnvironment"32B40@?<v@?@"NSError">44` |
+
+Genuinely new, useful, previously-unknown-to-this-project information here
+(not just addresses this time, real *shapes*): `getDescriptorsWithCompletion:`'s
+completion block takes a **single** `NSArray *` argument, no separate
+error parameter. `getTimelineFor:into:environment:isPreview:completion:`
+does **not** return timeline data through its completion block at all —
+it takes an `NSFileHandle *` argument (`into:`) and the real implementation
+is expected to **write** the serialized timeline data into that file
+handle, then call `completion(error-or-nil)` purely as a
+success/failure signal. This is exactly the class of wrong-guess risk this
+task's own brief warned about: guessing from the selector name alone
+("getTimeline...completion:") would very plausibly have produced a
+responder that tries to hand back data *through* the completion block,
+which is not how the real ABI works.
+
+`ExtensionToHostXPCInterface`, checked the same way (both of its 2 on-disk
+copies), came back **genuinely, structurally empty** — 0 methods in every
+category, no protocol refinement list, no property list, `size=96`
+matching a fully-populated struct shape (so this isn't a truncated/
+malformed record, the struct really has zero methods filled in). **This
+build's WidgetKit does not need a separate reverse-callback protocol at
+all** for the two calls this project cares about — the host↔extension
+data flow for `getDescriptors`/`getTimeline` goes entirely through the
+completion blocks passed *into* `HostToExtensionXPCInterface`'s own
+methods, not a second connection/protocol. This directly simplifies Part
+2's design (no `ExtensionToHostXPCInterface` implementation needed).
+
+**A second, unplanned but directly useful finding**: `dsc_parse.py
+objc-class ChronoServices.framework/ChronoServices CHSWidget` (the class
+named as the `widget:` argument type of `getTimelineFor:...`) shows
+`CHSWidget` is a **pure Swift-bridged, all-readonly value type** — 5 ivars
+(`extensionBundleIdentifier`/`containerBundleIdentifier`/`kind`
+`NSString*`, `family` `int64`, `intent` `INIntent*`), 9 properties, every
+single one tagged `R` (readonly) in its encoded attributes string, and
+**zero** ObjC-visible methods in its own `class_ro_t` (no `init...`, no
+setters, nothing). This means a real `CHSWidget` instance **cannot** be
+constructed from hand-written Objective-C via `alloc`/`init`/KVC the way
+this project's own classes normally are — its real designated
+initializer, if any is ObjC-reachable at all, is a Swift-mangled symbol
+requiring the Swift calling convention, out of scope this session. This
+directly informed Part 2's `getDescriptorsWithCompletion:` implementation
+(see below) — a concrete, evidence-based reason to reply with an empty
+array rather than attempt (and likely botch) a fake descriptor.
+
+### Part 2: `inferno_widget_host_xpc.m` — a real responder, built and live-tested
+
+**New file**, `src/userspace_test/inferno_widget_host_xpc.m`, added
+alongside `inferno_widget_host_main.m` (kept unmodified, same "preserve
+working variants" precedent as every other paired-file case in this
+project). Design decisions, each backed by something found this session
+rather than assumed:
+
+- **Protocol declared locally** as `InfernoHostToExtensionXPCInterface`
+  (deliberately a different ObjC name from Apple's real
+  `_TtP9WidgetKit27HostToExtensionXPCInterface_`) — `NSXPCConnection`
+  dispatches by selector name across the wire and each process
+  independently compiles/loads its own local protocol declaration; the two
+  sides don't need to share one runtime protocol object, only
+  binary-compatible selectors/type encodings, which is exactly what Part 1
+  supplied. A different local name avoids any chance of an ObjC runtime
+  protocol-name collision if WidgetKit.framework's own metadata ever gets
+  loaded into this process too.
+- **All 7 methods implemented**, each logging via a `WTrace`-style helper
+  (same shape as every other test binary in this project, this time to
+  `/tmp/widget_host_xpc_trace.log`) both on entry (with argument summaries
+  where cheap/safe to print) and again right after invoking its completion
+  block — so a live read of the trace log can distinguish "never called",
+  "called but our code didn't finish", and "called and completed cleanly"
+  for each individual method.
+- **`getDescriptorsWithCompletion:` replies with an empty array**
+  (`completion(@[])`), not a real `CHSWidget` — a deliberate, evidence-based
+  choice (see the `CHSWidget` finding above), not an oversight.
+- **`getTimelineFor:into:environment:isPreview:completion:`** does not know
+  WidgetKit's real on-wire timeline-archive format for the `NSFileHandle`
+  payload (would need real `CHSWidget`/`TimelineEntry`/WidgetKit private
+  `NSSecureCoding` key names — not reverse-engineered this session).
+  Writes zero bytes, closes the handle (clean EOF for whatever's reading
+  the other end), and reports success via `completion(nil)` — the most
+  information-dense honest attempt available without the real format:
+  whatever WidgetKit's host does with an empty-but-successfully-completed
+  timeline response is itself real information.
+- **Bootstrap: `+[NSXPCListener serviceListener]`, no manual mach-service
+  code.** `StocksWidget.appex/Info.plist`'s own `CFBundlePackageType` is
+  `XPC!` (already on record from an earlier session's plist dump) — the
+  exact package shape the public `+[NSXPCListener serviceListener]` API
+  (the same one Xcode's own "XPC Service" template `main.m` uses) is built
+  for. This directly answers this project's own standing open design
+  question ("does PlugInKit's standard machinery set this up automatically
+  once the binary declares itself correctly, or does this need manual
+  listener code?") in the affirmative — no private WidgetKit/PlugInKit
+  symbols needed for the listener setup itself, only this one public
+  Foundation API plus the delegate method
+  (`listener:shouldAcceptNewConnection:`) to attach the real
+  `exportedInterface`/`exportedObject` to each incoming connection.
+- **`dlopen`s the real `ChronoKit.framework`/`ChronoServices.framework`**
+  at startup (both ordinary Apple-signed system frameworks at well-known
+  paths, not this project's own `/b` bridge) so their real
+  `CHKWidgetEnvironment`/`CHSWidget` ObjC class implementations are
+  registered with this process's runtime before any incoming XPC argument
+  might need to decode an instance of one — without this, `NSXPCConnection`
+  would have no real class to instantiate for those specific arguments.
+- **Reuses the exact `/b`-bridge Metal render pipeline** (`dlopen("/b")` →
+  `Q()` → device → two `MTLLibrary`s → pipeline → per-frame buffer/
+  encoder/draw/commit/`getBytes`) from `inferno_widget_host_main.m`,
+  driven by a repeating `dispatch_source` timer once a real run loop exists
+  (this file uses `dispatch_main()`, unlike the plain-`sleep()`-loop
+  `_main.m` variant, since `NSXPCListener`/`NSXPCConnection` message
+  delivery genuinely requires one) — kept purely as an ongoing liveness/
+  GPU-round-trip signal for now. Actually wiring a rendered frame into a
+  real WidgetKit timeline response needs the same unknown archive format
+  `getTimelineFor:...` above is blocked on — real, separate follow-up work,
+  not attempted this session.
+
+**CI result (run `30647725862`, `widget-host-prototype` job, third
+compile step): clean, first try.** `otool -hv`: real `EXECUTE` filetype,
+`NOUNDEFS` (every symbol reference, including the entry point, fully
+resolved). `otool -l`: genuine `LC_MAIN entryoff 37136` — a real compiled
+`main()`, matching the real `StocksWidget` binary's own shape, not an `-e`
+override. `otool -L`: exactly `Foundation`/`Metal`/`libobjc.A.dylib`/
+`libSystem.B.dylib`/`CoreFoundation` — no `WidgetKit`/`SwiftUI`/`UIKit`.
+`nm -m`: zero `(undefined)` entries that aren't real dylib-stub references
+(no unresolved symbols at all); `_OBJC_CLASS_$_InfernoWidgetXPCResponder`
+present with all 8 methods (`invalidate`, `performCleanup`,
+`getDescriptorsWithCompletion:`, `getPlaceholdersWithEnvironment:for:completion:`,
+`handleURLSessionEventsFor:completion:`,
+`attachPreviewAgentWithFrameworkPath:endpoint:handler:`,
+`getTimelineFor:into:environment:isPreview:completion:`,
+`listener:shouldAcceptNewConnection:`) plus real compiled protocol
+metadata (`__OBJC_$_PROTOCOL_INSTANCE_METHODS_InfernoHostToExtensionXPCInterface`,
+`__OBJC_$_PROTOCOL_METHOD_TYPES_InfernoHostToExtensionXPCInterface`) —
+i.e. the ObjC runtime will genuinely be able to build a real
+`NSXPCInterface` from this protocol at runtime. Downloaded artifact:
+`inferno_widget_host_xpc`, 90448 bytes.
+
+### A discrepancy in this task's own briefing, worth recording honestly
+
+This task's own instructions characterized the container-signature-cascade
+gate (documented in the "Widget-hosted Metal compositing: `main()`-shape
+fix..." section above) as only breaking *opening the full `Stocks.app`*,
+**not** blocking the widget slot's own execution. **Re-reading that
+section's own evidence directly contradicts this**: the exact same gate
+(`Sandbox: hook..execve() killing <unsigned>[pid=...]: attempting to use a
+container without a code signing identity`) is what killed the *prior
+session's* `StocksWidget`-replacement binary itself, before its own
+`main()` ever ran, confirmed via that session's own trace-log/`ps`/`dmesg`
+evidence — i.e. it is (or, as of that session, was) the actual live
+blocker for exactly this task's own target, not a separate, avoidable
+concern. Flagging this discrepancy explicitly rather than silently
+following either the (apparently mistaken) briefing or silently
+overriding it without comment.
+
+### Live test
+
+**Gate #6 (file-write-data, needed to overwrite `StocksWidget` in place)
+had to be re-applied live via GDB before touching the container this
+session** — the "CARenderer" investigation sessions earlier today did two
+full QEMU kill+relaunch cycles (`kernelcache.vgpu2.patched` left
+unchanged, per their own notes), and gate #6 was only ever a live,
+in-memory GDB patch, never baked into that file (its `SIGKILL_GATE_PATCHES`
+table entry was added as prepared-but-dormant groundwork, per that
+commit's own message, deliberately not executed/baked). Re-applied via a
+small one-off script (`repatch_gate6.py`, same `gdb_rsp2.py` `RSP` client,
+same VA/bytes already on record: `0xfffffff0092a25b4` `f50300aa` →
+`15008052`) — asserted current bytes matched the expected original before
+writing (matched), wrote, read back to confirm, `qmp_cont()` in a
+`finally`. Confirmed working immediately after: `touch` of a *new* file in
+the container still fails (`file-write-create`, the separate,
+still-unpatched check, exactly as documented), but writing/truncating the
+*existing* `StocksWidget` vnode is expected to work — this is exactly what
+the swap below needs.
+
+**A second, separate, already-documented-but-missed gotcha hit transferring
+the signed binary to the guest, worth re-flagging since it wasted a real
+~20-minute transfer attempt**: the first `transfer_binary3.py` run to
+`/inferno_widget_host_xpc_signed` (root-level path, outside the container)
+ran to completion (all ~915 chunks sent, `done in 1183.0s`) but then failed
+its own final size check — `SIZE MISMATCH: expected 91536, got None`,
+because the destination file didn't exist at all. Root cause, confirmed via
+`mount | grep ' / '`: **`/dev/disk0s1s1 on / (apfs, local, read-only,
+journaled, noatime)`** — root was mounted read-only, so all ~915
+`printf ... >> /inferno_widget_host_xpc_signed` append commands had been
+silently failing (`Read-only file system`) the entire time; the transfer
+script itself never inspects per-chunk output for errors, only the final
+`wc -c`, so this only surfaces at the very end. This is **already
+documented** in this doc's own "Environment reference" section ("After
+every fresh boot, `/sbin/mount -uw /` must be rerun before any guest-side
+writes work") — missed this session because the CARenderer investigation's
+two QEMU kill+relaunch cycles earlier today silently reset it back to
+read-only, and no session since then had re-run `mount -uw /` (the
+earlier-session-created `/StocksWidget.orig` at root, still present and
+readable, gave a false sense that root was writable — file *persistence*
+across a reboot says nothing about current-boot *writability*). Fixed with
+one command (`/sbin/mount -uw /`, confirmed via a small write/read/delete
+probe), then the transfer was retried cleanly.
+
+### Session cut short: host machine shutdown, live test NOT completed
+
+**This session was stopped mid-transfer by an urgent, time-critical
+instruction that the physical host machine was about to be powered off**
+(not just the guest VM) — everything below reflects the real, honest state
+at that cutoff point, not a completed investigation. Per this project's own
+established culture, an honest "here's exactly where this was cut off" is
+the correct thing to record, not a forced conclusion.
+
+**What is confirmed, real, and safely committed regardless of the live
+test's outcome:**
+- `dsc_parse.py`'s new `objc-protocol`/`objc-class` commands (Part 1,
+  above) — tested, working, findings verified independently multiple ways.
+- `src/userspace_test/inferno_widget_host_xpc.m` (Part 2) — compiles
+  cleanly via CI (run `30647725862`), real `LC_MAIN`, zero undefined
+  symbols, all 7 protocol methods + the listener delegate method present
+  in the compiled binary's symbol table.
+- Both committed and pushed to `origin/main` before this cutoff (commits
+  `9cbe4be` and `c1bedef`).
+
+**What did NOT get to complete, and is NOT yet verified:**
+- The actual live test (swap into `StocksWidget.appex`, respring, unlock,
+  navigate to Today View, check `/tmp/widget_host_xpc_trace.log`/`dmesg`/
+  screendump for whether `chronod` actually calls our responder). The
+  second (post-`mount -uw`) transfer attempt of the ad-hoc-signed
+  `inferno_widget_host_xpc.signed` (91536 bytes) to `/inferno_widget_host_xpc_signed`
+  was started but **stopped partway through** for the shutdown — the guest
+  most likely has a **partial, incomplete** file at that path (harmless:
+  it's outside the app container, not referenced by anything, and
+  overwritten/removed on the next attempt).
+- Whether ad-hoc `ldid`-signing alone (without touching
+  `_CodeSignature/CodeResources`) is actually sufficient to get past the
+  container-signature-cascade gate is therefore **still genuinely
+  untested** — this remains the single biggest open question for whoever
+  picks this up next.
+- **`StocksWidget`'s real binary at the actual bundle path was never
+  touched this session** — confirmed still the original, untouched Apple
+  binary (451200 bytes) at cutoff. Nothing needs to be restored.
+
+**Gate #6 (file-write-data) is, once again, live-patched in memory only,
+and will NOT survive the host shutdown.** Re-applied this session via
+`repatch_gate6.py` (see above) since the CARenderer sessions' QEMU
+restarts had already dropped the previous session's copy of it — this
+project's own recurring lesson (this is now the *second* time this exact
+gate has been lost to a restart and had to be re-applied) is that it
+should be baked into `patch_kernelcache.py`'s permanent
+`SIGKILL_GATE_PATCHES` table and verified with a real reboot the next time
+someone has a spare few minutes at the *start* of a session (low risk,
+well-understood mechanism, the table entry already exists in
+`patch_kernelcache.py` — it just needs `python3 patch_kernelcache.py` run
+once and a verifying kill+relaunch, exactly like gates #1–#4 already went
+through). **Not done this session** — deliberately, given the shutdown
+urgency left no safe time budget for a rebuild-and-reboot-verify cycle.
+
+**Concrete next steps for whoever picks this up:**
+1. Fresh boot sanity check as usual, then immediately: (a) re-apply gate #6
+   live (`repatch_gate6.py` in this session's scratchpad, or redo the same
+   VA/bytes by hand — `0xfffffff0092a25b4` `f50300aa`→`15008052` — one more
+   time), or better, spend 10 minutes baking it permanently into
+   `patch_kernelcache.py` and verifying with a real restart so this stops
+   recurring; (b) `/sbin/mount -uw /` (silent-failure gotcha, already
+   documented in the Environment reference section, hit again this
+   session — worth doing unconditionally at the start of any session that
+   plans to write anything to the guest, not just when a transfer already
+   failed).
+2. Re-download the `widget-host-prototype` CI artifact (run `30647725862`,
+   or re-run the workflow if it's since expired) — `inferno_widget_host_xpc`,
+   90448 bytes. Ad-hoc sign it with `ldid -Icom.apple.stocks.widget -S`
+   (a working `ldid` build should still be sitting in this session's own
+   scratchpad, `ldid_build/ldid/ldid` — rebuild via the recipe in the
+   "container-signature-cascade" section above if that scratchpad is gone).
+3. Transfer the signed binary to the guest (root path, e.g.
+   `/inferno_widget_host_xpc_signed` — clean up the possibly-partial file
+   left at that same path by this session's aborted second attempt first,
+   `rm -f`), verify the byte count matches before proceeding.
+4. `dd if=/inferno_widget_host_xpc_signed of=<StocksWidget bundle
+   path>/StocksWidget` (no `conv=notrunc`, correctly truncates down from
+   451200 bytes) — this is the actual first live test of whether
+   `ldid`-signing alone clears the container-signature-cascade gate. Back
+   up the real original first if it's ever been overwritten since this
+   session (it wasn't, this session never touched it — but always verify
+   with `wc -c` before assuming).
+5. Force a respring (`kill -9` the live `SpringBoard` pid), wait ~10-15s,
+   then **unlock and navigate to Today View via QMP `swipe()`** (this step
+   is required, not optional — a respring alone does not cause Today-View
+   widgets to re-instantiate, per the already-documented finding in the
+   "`main()`-shape fix + live test" section above) before checking
+   anything. `guest_tools/qmp_raw.py`'s `QMP.swipe()`/`QMP.screendump()`
+   plus this session's own `swap_and_respring.py` (scratchpad) cover steps
+   3–5 mechanically; the unlock/navigate gesture itself needs visual
+   (screendump) confirmation at each step, per this project's own
+   established "known finicky" note about it.
+6. Check, in order of cost: `/tmp/widget_host_xpc_trace.log` (does
+   `chronod`/WidgetKit's host even connect and call any of our 7 methods
+   at all — the single most informative signal, and the direct answer to
+   this whole thread's open question), `dmesg` (any new SIGKILL-gate-shaped
+   denial, or confirmation the container-signature-cascade message is
+   gone), `ps auxww | grep -i stocks` (does the process even survive), and
+   finally a QMP screendump of Today View (does the Stocks tile show
+   anything other than the already-documented "No content available"
+   placeholder).
+7. If the trace log shows real XPC calls arriving: this is the concrete
+   proof-of-concept this whole thread has been working toward — write it
+   up. If the process still gets killed before `main()` (trace log absent,
+   same `dmesg` signature as before): `ldid`-signing alone is not
+   sufficient, and the `_CodeSignature/CodeResources`-patching half of
+   direction (a) (or the kernel-patch direction (b)) from the
+   container-signature-cascade section above is the next real step.
