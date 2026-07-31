@@ -4272,3 +4272,129 @@ reads (the DSC file already on disk, plus GitHub source fetches) and local
 console, QMP socket, or GDB port, and zero interaction with
 `InfernoData/root`, confirmed throughout by construction (no tool in this
 session's history touches ports 4444/1234 or that path).
+
+## `CARenderer`'s real Metal backend surface found via `dsc_parse.py`, live-checked, inconclusive (2026-07-31, same day, orchestrating session direct work — no subagent)
+
+Direct follow-up to a question the user raised mid-session: given `backboardd`'s
+own binary has zero Metal symbol references (see the earlier `backboardd`/
+compositor investigation), how does real hardware get GPU-accelerated blur
+(`UIVisualEffectView`/vibrancy) at all? Answer worked out live using the new
+`dsc_parse.py` tool, done directly by the orchestrating session (not a
+subagent, per explicit user instruction) — genuinely useful new API surface
+found, but the live-verification half came up empty across two separate
+windows, for reasons detailed below.
+
+**Static finding: `CARenderer`/`CARenderServer` really does have a Metal
+rendering mode, distinct from the public `CAMetalLayer`/`MTLDevice` surface
+already known to this project.** `dsc_parse.py dump-exports
+QuartzCore.framework/QuartzCore` turned up:
+- `_kCARendererMetalCommandQueue` — a `CARenderer` option-dictionary key
+  (paired conceptually with `_kCARendererDeepBuffers`/`_kCARendererColorSpace`/
+  `_kCARendererClearsDestination`, all real `CARenderer` init options).
+- `_kCARenderMetalCallbacks`/`_kCARenderMetalCallbacksRef` **and** the
+  parallel `_kCARenderSoftwareCallbacks`/`_kCARenderSoftwareCallbacksRef` —
+  two parallel callback-struct registrations, strongly suggesting a real
+  Metal-vs-software backend switch exists inside `CARenderServer`'s own
+  internals, exactly the "QuartzCore-internal angle" the backboardd
+  investigation flagged as unexplored.
+- `_CARenderServerSetRootQueue` — name strongly suggestive of the actual
+  backend-selection entry point (never proven — see below).
+- `_CARenderBackdropCollect`/`_OBJC_CLASS_$_CABackdropLayer`/
+  `_kCAFilterGaussianBlur`/`_kCAFilterVariableBlur` — confirms the real
+  blur/vibrancy machinery (`CABackdropLayer`, the private class backing
+  `UIVisualEffectView`) is real, present, and distinct from the widget-hosting
+  work elsewhere in this doc.
+
+**Re-checked `backboardd`'s own binary against these exact new symbol names
+(same `dd`/`od`/`grep -a` technique as the original investigation) — clean
+negative, and it narrows things further than before**: `grep -ao
+'_CARenderServer[A-Za-z]*' /usr/libexec/backboardd | sort -u` returns
+**exactly one** match, `_CARenderServerRenderDisplay` — not
+`CARenderServerStart`, not `CARenderServerSetRootQueue`, not any of the
+Metal/Software callback constants. **`backboardd` is a pure client of
+`CARenderServer` (asks it to redraw), it does not start or configure it** —
+someone/something else does, most plausibly QuartzCore's own internal
+framework-load-time initialization (living in the DSC, invisible to a
+same-process static string search), not any single daemon's own
+hand-written code.
+
+**Live verification attempted, twice, both negative — inconclusive, not a
+clean disproof.** Armed GDB breakpoints directly (`_CARenderServerStart`
+`0xfffffff18820717c`→ wait, real VA `0x18820717c`, and
+`_CARenderServerSetRootQueue` `0x188207180`, both DSC-resident/fixed
+addresses per this project's established KASLR-off + non-slid-DSC finding)
+using a new one-off script (not committed — trivial, reused
+`gdb_rsp2.py`/the existing candidate-watch pattern verbatim). Breakpointed
+`_CARenderServerStart` (VA `0x18820717c`) and `_CARenderServerSetRootQueue`
+(VA `0x188207180`), both DSC-resident/fixed addresses per this project's
+established KASLR-off + non-slid-DSC finding:
+1. **Respring-triggered window** (~70s wall-clock, breakpoints armed
+   throughout, `kill -9` on the already-hours-uptime `SpringBoard` pid to
+   force fresh process launches mid-window): zero hits.
+2. **Full fresh-boot window**: killed and relaunched QEMU (cheap, patches
+   disk-resident), armed `gdbserver tcp::1234` and both breakpoints
+   *immediately* after relaunch (before the kernel meaningfully starts
+   executing), then watched continuously for 300s wall-clock. **Zero hits**,
+   despite the guest genuinely reaching a stable, fully-booted state by the
+   end of the window (confirmed via `ps`: `backboardd` pid 60 and
+   `SpringBoard` pid 57 both up, `uptime` showing `up 0:04` — i.e. ~240
+   guest-seconds of real boot progress got covered, not the near-total
+   dilation-driven starvation this project's own MapKit investigation
+   documented for a naively-long continuously-armed window. This makes the
+   negative result meaningfully stronger than a first glance suggests: this
+   wasn't "the window was too short/too dilated to reach the interesting
+   part," both daemons' entire startup sequence happened *inside* the
+   covered range).
+
+**Honest interpretation, not yet resolved.** Two real possibilities, not
+distinguished this session:
+1. **These exact C symbols are called via `objc_msgSend` dispatch (e.g. a
+   hypothetical `+[CARenderServer start]` class method), not a direct `BL`
+   to the C function** — a breakpoint on the C symbol's own entry would
+   still have to fire even for an ObjC-wrapped call (the method
+   implementation would presumably still call through to this same C
+   function internally, if it's a thin wrapper) — but if the *real*
+   initialization instead happens via some entirely different function this
+   session didn't know to breakpoint (e.g. a private, unexported
+   `_CARenderServerInitialize`-style local symbol, or logic inlined directly
+   into a framework-load `+load`/static-initializer rather than a
+   separately-callable function at all), that would explain a clean miss
+   without contradicting the "Metal backend surface is real" finding.
+2. **This specific iOS 14/T8030 build genuinely never exercises the Metal
+   backend path** — `CARenderServer` may default to (or be hardcoded to,
+   for this device class/build) `kCARenderSoftwareCallbacks` unconditionally,
+   with the Metal path only a legacy/alternate-platform option never
+   actually taken on this hardware target. This would be consistent with,
+   not contradicting, the existing "software-composited-then-blit" finding
+   from the original backboardd investigation.
+
+**Concrete next steps for whoever continues this:**
+1. Use `dsc_parse.py` to enumerate `CARenderServer`'s/`CARenderer`'s real
+   ObjC method list (via the class's method-list structure, not yet
+   supported by `dsc_parse.py`'s current two query modes — would need a
+   small extension to walk `objc_class`→`objc_method_list` the same way
+   `dump-exports` already walks the export trie) and breakpoint the actual
+   resolved method IMP addresses instead of guessing at C symbol names.
+2. Alternatively (cheaper, no new tooling): breakpoint `objc_msgSend` itself
+   with a *conditional* check on the selector/class name matching
+   `CARenderServer`-family strings — expensive/hot in general, but this
+   project has already worked around exactly this class of problem before
+   (the MapKit investigation's own "too hot to breakpoint directly, need a
+   narrower target" lesson) — would need the same discipline (short,
+   targeted window only, arm reactively not continuously) to avoid another
+   dilation trap.
+3. Simplest of all, not yet tried: `grep -a` **all** DSC-resident framework
+   binaries with real backing images this build actually loads (not
+   just QuartzCore) for `kCARendererMetalCommandQueue`'s literal string
+   bytes as a *reference*, the same "who references this constant" trick
+   already used successfully elsewhere in this doc — would need extending
+   `dsc_parse.py` with a raw byte-search-across-all-images mode (a small,
+   mechanical addition given the mapping/file-offset translation it already
+   has).
+
+**Environment left clean**: `/sigkill_test` → `Segmentation fault: 11`,
+`/compute_test` → `result = 42`, QMP `info status` → `running`, both
+breakpoints removed after each window, no dangling paused state (verified
+by polling `info status` immediately after the fresh-boot window's `finally:
+qmp_cont()` fired). Guest is on a fresh boot (QEMU relaunched this session,
+same disk-resident patches, `kernelcache.vgpu2.patched` untouched).
