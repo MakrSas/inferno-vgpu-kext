@@ -1200,6 +1200,243 @@ Environment left clean by the script's own `finally` block: all 18
 breakpoints removed, QMP `cont` issued and confirmed (`RESUME` event seen),
 no dangling paused state.
 
+### UPDATE 2026-07-31 (new session): MKMapSnapshotter direct-trigger test
+### built, deployed, and run — negative result, but a real and useful one:
+### the binary crashes before `main()`, matching (and independently
+### corroborating) the still-unsolved `agx_system_metal_test` pre-`main()`
+### dyld-bootstrap crash, via a completely different, non-Metal-linking
+### framework
+
+Direct follow-up to this section's own "most reliable" next step:
+`src/userspace_test/mapkit_snapshotter_test.m` (new file) constructs an
+`MKMapSnapshotOptions` (plain struct literals throughout — deliberately
+avoids `CLLocationCoordinate2DMake`/`MKCoordinateRegionMake`/`CGSizeMake` so
+the link line stays minimal, `-framework Foundation -framework MapKit`
+only, per this task's own instruction), builds an `MKMapSnapshotter`, and
+calls `startWithQueue:completionHandler:` on a GCD **global concurrent**
+queue (not the plain `startWithCompletionHandler:` main-queue variant —
+this binary has no run loop pump, so blocking the calling thread on a
+semaphore while the completion handler also needed that same blocked
+thread's queue would deadlock; a global queue is serviced by GCD's own
+thread pool independently of any run loop, sidestepping that entirely).
+Bounded 120s `dispatch_semaphore_wait`. `MTrace()`-style tracing to
+`/tmp/mapkit_test.log` at every stage, identical idiom to
+`agx_system_metal_test.m`'s own helper, precisely because (per that
+investigation) this exact class of test can be killed/crash with zero
+stdout output.
+
+**CI**: new step added to the `agx-bridge-dylib` job in
+`.github/workflows/build.yml` (same `clang -target arm64e-apple-ios14.0
+-isysroot "$SDK" -fobjc-arc -framework Foundation -framework MapKit ...`
+shape as every other step in that job). Pushed (commit `0529fe4`), CI run
+`30608243614` succeeded — **`-framework MapKit` links cleanly on this SDK,
+no issues**, a new, previously-untested data point for this project.
+Downloaded the `agx-bridge-dylib` artifact: `mapkit_snapshotter_test`,
+68480 bytes.
+
+**New gotcha found during deployment, worth correcting in this doc's own
+playbook**: transferred to `/tmp/mapkit_test` first, per this task's own
+literal instruction and per the existing "Playbook: running new test
+logic" text ("`/tmp` is fine for a plain executable"). **That turned out to
+be wrong for this binary, on this exact live boot** — running it (whether
+via `nohup .../mapkit_test &` or plain foreground `/tmp/mapkit_test`)
+produced a real, new, previously-undocumented denial:
+```
+System Policy: nohup(1387) deny(1) process-exec* /private/var/tmp/mapkit_test
+System Policy: bash(1402) deny(1) process-exec* /private/var/tmp/mapkit_test
+process-exec denied while updating label
+Sandbox: hook..execve() killing <unsigned>[pid=1402, uid=0]: (err=1) failed to apply exec policy
+```
+This is a **genuinely different** Sandbox.kext check from all five
+already-patched SIGKILL gates (those are codesigning/entitlement checks,
+content- and mostly path-independent; this one is specifically
+`process-exec*` gated on the `/private/var/tmp` path) — i.e. a `/tmp`-is-
+not-executable-for-a-brand-new-process restriction, the same *class* of
+restriction (though a different, execve-specific check) as the
+already-documented `enable -f /tmp/....dylib` mmap-block for the
+bash-builtin route. **Fix, same shape as that earlier one**: `cp` the
+binary from `/tmp` to `/` guest-side (cheap, no re-transfer needed) before
+running it — confirmed this works (`/mapkit_test`, direct foreground exec,
+no policy-deny message at all afterward). Every previously-confirmed-
+working test binary in this project's history (`/sigkill_test`,
+`/compute_test`, `/draw_test`, `/agx_system_metal_test`, ...) was, on
+inspection, actually always deployed to `/` already — the "`/tmp` is fine"
+playbook text was an untested assumption, now empirically falsified for at
+least this binary/boot. **Playbook corrected below.**
+
+**The test binary itself crashes, reliably and reproducibly, via plain
+`SIGSEGV` — not a sandbox/AMFI policy kill.** `/mapkit_test` (root path):
+`Segmentation fault: 11` (exit 139), reproduced twice via direct,
+un-instrumented `execve()`. Critically, **`/tmp/mapkit_test.log` — written
+by `MTrace()` as the literal first statement inside `main()`'s
+`@autoreleasepool` block, before touching MapKit at all — is never
+created**, meaning execution never reaches the first line of `main()`.
+This is **exactly** the same signature already fully characterized in the
+"`agx_system_metal_test` crash investigation" section below: a pre-`main()`
+crash, not a `main()`-body bug. `dmesg` confirmed no AMFI/Sandbox kill
+message for either crashing run either (genuine `SIGSEGV`, not a disguised
+policy kill).
+
+**This is a materially new, useful data point for that OTHER,
+still-unsolved investigation, found as a byproduct of this one.**
+`mapkit_snapshotter_test` links `-framework MapKit` and does **not** link
+`-framework Metal` at all, and never references `MTLCreateSystemDefaultDevice`
+(directly or via `dlsym`) anywhere in its source — i.e. it has none of the
+properties the leading hypothesis in that investigation was originally built
+around (eager/lazy binding of that one specific Metal C symbol; that
+hypothesis was already disproven by the dlsym experiment, see that
+section's own dated updates). **A second, structurally unrelated binary,
+linking a completely different large framework, crashes the identical
+way**: pre-`main()`, zero dmesg policy message, `SIGSEGV`. This further
+generalizes the mystery away from "something Metal/`MTLCreateSystemDefault
+Device`-specific" toward "something about dyld's own bootstrap handling of
+a sufficiently large/complex framework dependency closure on this specific
+kernel/DSC build" — consistent with, and now independently corroborating,
+that section's own "the crash is dyld's own bootstrap/loader machinery"
+conclusion.
+
+**Live capture, three GDB-armed windows, all using
+`guest_tools/run_mapkit_test_watch.py` (new file, direct sibling of
+`tap_maps_watch.py` — same 10 sandbox candidates + 6-address block_invoke
+chain + `handle_user_abort`/`exception_triage`, same SMP-safety rules, same
+`finally`/`qmp_cont()` discipline, trigger swapped from a QMP tap to
+running the test binary over a second, separate serial connection — see
+that file's own docstring) plus a leaner 2-breakpoint variant
+(`guest_tools/run_mapkit_test_abort_only.py`, new file, `handle_user_abort`
++ `exception_triage` only, written specifically to reduce GDB-breakpoint-
+induced dilation for a tighter trigger-to-fault correlation)**:
+
+1. **240s window, full 18-breakpoint set, triggered via the (at-the-time-
+   still-broken) `/tmp` path.** Zero sandbox denies, zero block_invoke
+   hits, zero triage hits, 215 `handle_user_abort` hits — **all** traced to
+   just 2 recurring `state` pointers (i.e. ordinary background lazy-binding
+   activity from already-running processes, not our own trigger, since the
+   `/tmp` exec was denied before the binary ever ran). Uninformative for
+   the crash itself, but confirms the sandbox/chain breakpoints are correct
+   and armed cleanly.
+2. **100s window, full 18-breakpoint set, corrected `/` path.** Zero
+   sandbox denies, zero chain hits, zero triage hits, 30 `handle_user_abort`
+   hits, again all attributable to only 2 recurring `state` pointers.
+   Post-hoc guest-side check (`/tmp/mapkit_test_stdout.log` freshly emptied
+   by the trigger's own `rm -f` + redirect, `/tmp/mapkit_test.log` still
+   absent) **confirmed the trigger command genuinely did execute and crash
+   during this window** — the crash's own fault event simply wasn't caught
+   live. Root-caused: this project's own already-documented GDB-breakpoint-
+   induced dilation (see the section below, "three separate observation
+   windows...") applies not just to guest monotonic-time advancement during
+   a long passive wait, but — worse, and not previously characterized this
+   precisely — to **QEMU's host-side I/O-loop responsiveness for the
+   *other*, non-debug serial chardev** (port 4444) while the gdbstub
+   connection (port 1234) is busy: a standalone, no-GDB-attached control
+   test of the exact same trigger command completed in **0.17s** wall-clock
+   (confirmed directly, see below); under 18 live breakpoints the same
+   command's guest-side effects were still arriving well past this run's
+   own 100s window.
+3. **60s window, abort+triage only (2 breakpoints).** 31 hits, only 2
+   unique `state` pointers — still no isolated, one-off hit attributable to
+   a freshly-crashed process.
+4. **200s window, abort+triage only.** 166 hits, **5** unique `state`
+   pointers — four recurring (8-63 hits each, ordinary background
+   activity), and **one single-occurrence hit**: `t=163.8s`,
+   `state=0xffffffe19cc25090`, **`pc=0x18d40b24c`**,
+   **`far=0x16d6d3f10`** (the faulting address), `esr=0x92000047` (EL0 data
+   abort, `ESR_EC=0x24`, `DFSC=0x07` = translation fault at level 3),
+   never repeated for the rest of the window (consistent with the thread
+   dying on this exact fault, matching a freshly-exec'd, immediately-
+   crashing process's expected one-shot signature). **`0x18d40b24c` falls
+   squarely inside the exact `~0x184000000`–`~0x1eeffffff` address range
+   family already identified, across three separate runs, as dyld's own
+   privately-mapped code** in the "`agx_system_metal_test` crash
+   investigation" section below (not the app's own binary mapping, not the
+   fixed system-wide dyld_shared_cache range). Given a freshly-relaunched
+   dyld gets a fresh ASLR slide on every single `execve()` (already
+   established in that section, from `mach_loader.c`'s
+   `dyld_aslr_page_offset` handling), an exact address match across
+   different binaries/runs was never expected — landing in the *same
+   family of ranges* is exactly the right signature to expect if this is
+   genuinely the same underlying dyld-bootstrap fault class, and this
+   result delivers precisely that.
+
+**Standalone (no GDB) control test, for the dilation claim above**: same
+exact trigger command (`rm -f ...; /mapkit_test > .../stdout.log 2>&1; echo
+TRIGGER_EXIT_$?`) sent over a fresh, GDB-free serial connection completed
+in 0.17s wall-clock (`Segmentation fault: 11` at +0.16s, `TRIGGER_EXIT_139`
+at +0.17s) — directly demonstrating the crash itself is fast/deterministic,
+and that the difficulty correlating it live is purely a GDB-overhead
+artifact, not evidence the crash is somehow rare, timing-sensitive, or
+different when instrumented.
+
+**Bonus, unplanned finding — the passive/organic signal from the earlier
+investigation is still real on a long-running boot.** `dmesg`, scanned
+after this session's live-capture work, showed a **third** natural,
+uninitiated MapKit sandbox-deny event (`com.apple.MapKit(1470) deny(1)
+file-read-{metadata,data} /b`, at guest uptime `[11695.29...]`) —
+completely independent of this session's own `/mapkit_test` triggers
+(different pid, and it landed during the abort-only run 4 above, which
+didn't have the 10 sandbox candidates armed at all). Confirms the
+originally-observed passive signal (pids 363/364) is not a one-off
+artifact of one specific boot — it recurs on a sufficiently long-running
+boot (this one has been up since ~07:46, well over 3 hours by this point).
+**Not chased further this session** — no live register data was captured
+for it (wrong breakpoint set armed at the time), and re-arming to catch a
+fourth occurrence live would mean returning to the exact passive-timing
+approach this whole task was assigned specifically to route around; out of
+this session's scope, noted here only as corroborating evidence that the
+underlying phenomenon (and the still-open sandbox-deny hunt) remains real
+and worth solving, independent of this session's own (negative) result.
+
+**Bottom line for this task**: **MKMapSnapshotter, called directly via the
+real public API, does NOT reach `MTLCreateSystemDefaultDevice()` either —
+not because MapKit's own code doesn't call it (the historical dmesg
+evidence already proves it does, from its real XPC service), but because
+this test binary never reaches `main()` at all, crashing during dyld's own
+process-bootstrap first.** This is a valid, evidence-backed negative
+result, not a tooling failure: the crash is reproducible (2/2 direct runs),
+zero dmesg policy-kill signature (genuine `SIGSEGV`), zero `/tmp/mapkit_
+test.log` (proves pre-`main()`), and one clean, isolated fault-PC capture
+landing in the exact address-range family already implicated by the
+independent `agx_system_metal_test` investigation. **No live sandbox-deny
+was captured this session** — the 6 precomputed candidate patches from the
+static-analysis subsection above remain unapplied, correctly, per this
+task's own explicit instruction not to patch blind.
+
+**Concrete next steps for whoever picks this up:**
+1. **This session's own finding reframes the open question**: the real
+   blocker for a *direct, on-demand, CI-built test binary* reaching this
+   code path is no longer "the sandbox denies `/b`" — it's the earlier,
+   still-unsolved pre-`main()` dyld-bootstrap crash, now with **two**
+   independent corroborating binaries (`agx_system_metal_test`, linking
+   Metal; `mapkit_snapshotter_test`, linking MapKit) and PC evidence from
+   both landing in the same dyld-private-mapping range family. Solving
+   *that* crash (see that section's own "Concrete next steps," especially
+   finding `exception_triage`'s real, possibly-inlined call site for an
+   unambiguous single-hit capture) would likely unblock **every** future
+   test binary that links a nontrivial framework, not just this one —
+   probably the single highest-leverage remaining item across both
+   investigations.
+2. The passive/organic signal (bonus finding above) confirms the original
+   target phenomenon is still alive and reproducible given enough boot
+   uptime. If the pre-`main()` crash above is fixed first, re-running this
+   exact same `mapkit_snapshotter_test`/`run_mapkit_test_watch.py` pair
+   would then be the cheapest possible way to get the live sandbox-deny
+   capture this whole investigation has been chasing — the test app, CI
+   step, and watch tooling built this session are all already in place and
+   need no further changes for that.
+3. Playbook correction (applied below): transfer new test binaries to `/`
+   directly, not `/tmp`, given this session's live-confirmed `process-exec*`
+   denial for `/private/var/tmp`.
+
+Environment left clean: QMP `info status` confirmed `running` throughout
+(never left paused — every GDB script here used the same `finally`+
+`qmp_cont()` discipline as `tap_maps_watch.py`), `/sigkill_test` →
+`Segmentation fault: 11` (gate patches intact), `/compute_test` →
+`IOServiceOpen succeeded... result = 42 (expect 42)` (guest undisturbed),
+`dmesg` scanned for panics/asserts (none — only ordinary `memorystatus:`/
+`Sandbox: nehelper`/HID chatter and the bonus MapKit finding above). No
+kernel-side files or `patch_kernelcache.py` were touched this session — no
+live sandbox-deny was ever captured, so per this task's own instructions,
+no patch was applied.
+
 ## Widget-hosted Metal compositing design and prototype (2026-07-31)
 
 Direct follow-up to "Concrete next steps... 2" at the end of the App-level
@@ -2763,10 +3000,22 @@ still gets killed.
 2. Add/reuse a CI step compiling it (plain executable, or `-dynamiclib`
    for the builtin route — see the `agx-bridge-dylib` job in
    `.github/workflows/build.yml` for the builtin pattern).
-3. Transfer the resulting binary to the guest (any path, `/tmp` is fine
-   for a plain executable that only needs to survive until you run it;
-   the builtin route additionally needs `/` specifically, not `/tmp` — see
-   the historical workaround section above for why).
+3. **UPDATE 2026-07-31: transfer straight to `/`, not `/tmp`** — the
+   "`/tmp` is fine for a plain executable" claim this step used to make
+   here was an untested assumption, now live-falsified (see the MKMapSnapshotter
+   dated update above): running a freshly-transferred plain executable from
+   `/private/var/tmp` can hit a real, distinct Sandbox.kext
+   `process-exec*` denial (`System Policy: <proc> deny(1) process-exec*
+   /private/var/tmp/<name> ... failed to apply exec policy`) — a different
+   check from all 5 already-patched SIGKILL gates. Every binary in this
+   project's history that's actually been confirmed working via direct
+   `execve()` was, on inspection, always deployed to `/` anyway. If already
+   transferred to `/tmp`, no re-transfer needed — just `cp
+   /tmp/whatever_test /whatever_test; chmod 755 /whatever_test` guest-side
+   first (same fix shape as the already-documented `/tmp`-mmap-block fix
+   for the bash-builtin route below). The builtin route already required
+   `/`, not `/tmp`, for a different reason (mmap-for-exec sandbox block) —
+   this update means *both* routes now need `/`, not just the builtin one.
 4. Run it directly (`/whatever_test`), or, for the builtin route: `enable
    -f /path/to/whatever.dylib my_builtin_name` then run `my_builtin_name`.
 
@@ -2801,3 +3050,16 @@ still gets killed.
   (gitignored). Reusable template for "arm breakpoints, trigger an action,
   watch a bounded window" — swap in different candidate sets/trigger
   actions for other investigations.
+- `run_mapkit_test_watch.py <deadline_s> [label]` — direct sibling of
+  `tap_maps_watch.py`, same full candidate set, trigger swapped from a QMP
+  tap to running `/mapkit_test` over a second, separate serial connection
+  (127.0.0.1:4444) instead of the GDB debug port (127.0.0.1:1234) — the
+  two-phase "arm on one connection, trigger on another" pattern used
+  throughout this project. Written for the MKMapSnapshotter direct-trigger
+  test, see that section's dated update.
+- `run_mapkit_test_abort_only.py <deadline_s>` — leaner variant of the
+  above, arms only `handle_user_abort`+`exception_triage` (drops the other
+  16 addresses) specifically to reduce GDB-breakpoint-induced dilation for
+  a tighter trigger-to-fault-PC correlation — this is what actually caught
+  the single, isolated `mapkit_snapshotter_test` crash PC documented in
+  that same section.
