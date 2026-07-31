@@ -4398,3 +4398,89 @@ breakpoints removed after each window, no dangling paused state (verified
 by polling `info status` immediately after the fresh-boot window's `finally:
 qmp_cont()` fired). Guest is on a fresh boot (QEMU relaunched this session,
 same disk-resident patches, `kernelcache.vgpu2.patched` untouched).
+
+### UPDATE, same session: found the real bug in the live-verification method
+### itself (breakpointed an export *stub*, not the real function) — fixed and
+### retried, still zero hits, real blocker now narrowed to indirect dispatch
+
+Root-caused *why* the two live windows above came up empty, independent of
+whether the Metal backend is actually used: **the addresses this session
+breakpointed for `CARenderServerStart`/`CARenderBackdropCollect` were thin
+export *stubs*, not their real function bodies.** Checked by reading the raw
+instruction word at each export address directly out of the DSC file (own
+small standalone script, `find_carender_xrefs.py`, not committed — reuses
+`dsc_parse.py`'s `DSC` class for `vm_to_file` only, no new parsing
+infrastructure): `_CARenderServerStart`'s exported address (`0x18820717c`)
+decodes as a plain `B` (unconditional branch) instruction, i.e. it's a
+veneer/trampoline, not real code — its real implementation lives at
+`0x1881fba20`, reached only via following that branch. (`_CARenderBackdropCollect`
+is the same shape, stub at `0x1881bc78c` → real body at `0x1881f8f88`.)
+**`_CARenderServerSetRootQueue`'s exported address genuinely is real code**
+(starts with a `PACIBSP` prologue, not a branch) — so that address was never
+the problem for that specific symbol.
+
+This matters because DSC-internal callers (other code inside the same
+`QuartzCore.framework` image) get direct-branch-optimized by the linker
+straight to the real implementation, **bypassing the export stub entirely**
+— confirmed empirically: wrote a small BL/ADRP+ADD cross-reference scanner
+(same file, extends the "who references this constant" technique already
+used successfully elsewhere in this doc for kernel gates, generalized to
+scan an arbitrary VA range for `BL`-to-target and `ADRP`+`ADD`-to-target
+patterns) and found a real, genuine call site: **`0x1882a30b0`, inside a
+local/static C++ function named `shared_server_init(void*)`
+(`__ZL18shared_server_init`, mangled per the Itanium C++ ABI) at
+`0x1882a308c`, calls the real `CARenderServerStart` body directly** — this
+is almost certainly the actual lazy-singleton entry point (the name and
+shape — a local, unexported function containing the one real call to
+`CARenderServerStart` — match a classic `dispatch_once`/`pthread_once`
+lazy-init pattern precisely). A second cross-reference scan (`CARenderBackdropCollect`'s
+real body also gets a direct hit, call site `0x1881b8e88`, not yet
+traced further) confirms the scanning technique itself works correctly, not
+just a one-off coincidence.
+
+**Re-armed live with the corrected addresses** (`shared_server_init`
+`0x1882a308c`, `CARenderServerStart`'s real body `0x1881fba20`,
+`CARenderServerSetRootQueue` `0x188207180` — this last one unchanged, it was
+never a stub) and repeated the same respring-trigger technique (`kill -9` on
+`SpringBoard`'s pid, breakpoints armed throughout a 90s wall-clock window).
+**Still zero hits**, with essentially no unmatched-stop noise either (never
+reached the periodic-heartbeat print threshold) — i.e. this wasn't a
+dilation/noise problem this time, the breakpoints genuinely never fired
+during a full SpringBoard-and-its-widgets respawn cycle.
+
+**Honest interpretation.** `shared_server_init`'s own name and the fact it's
+never called via a direct, statically-resolvable `BL` from anywhere *within*
+QuartzCore's own `__TEXT` (checked, zero hits) strongly suggests it's
+reached via an **indirect call** — a function pointer loaded into a register
+and invoked via `BLR`, exactly the shape `dispatch_once`'s block-based API
+compiles down to (the block literal's invoke-function pointer, called
+through a register, not a fixed immediate target a simple `BL`-pattern
+scanner can find). This is consistent with, not contradictory to, the
+"real, unfired dispatch_once-gated lazy singleton" theory — it just means
+finding *its* caller needs either (a) a real ARM64 disassembler that
+resolves `ADRP`+`LDR` register loads through to their eventual `BLR` target
+(this project still doesn't have one — the `mini_disasm.py` referenced
+elsewhere in this doc was from a different, no-longer-available session
+scratchpad), or (b) breakpointing `shared_server_init`'s own address
+directly (already done, above) and accepting that "it never fires" is
+either a real negative (this build's `CARenderServer` truly never lazily
+inits during ordinary respring-triggered process churn) or a timing gap
+this session's two attempts didn't happen to cover (e.g. if the real trigger
+is the *very first* process in the whole boot to ever touch `CARenderServer`
+system-wide, and that already happened long before either of this session's
+GDB attach points, on either the warm boot or the fresh one).
+
+**Concrete next step, more targeted than the previous list**: breakpoint
+`shared_server_init` (`0x1882a308c`) specifically, armed from the *very*
+first instant of a fresh QEMU boot (this session's fresh-boot window did
+have this breakpoint's sibling `CARenderServerStart`'s *stub* armed from
+t=0, not the corrected real address — worth exactly repeating that specific
+condition, stub-bug now fixed, before concluding anything further from a
+respring-only signal). If a truly-from-t=0 window still gets zero hits on
+`shared_server_init` itself, that's a much stronger, cleaner disproof of the
+"Metal backend is ever used in this build" hypothesis than anything
+gathered so far — worth doing before investing in a real disassembler.
+
+**Environment re-verified clean after this update**: `/sigkill_test` →
+`Segmentation fault: 11`, `/compute_test` → `result = 42`, QMP `info status`
+→ `running`, both breakpoint sets fully removed, no dangling paused state.
