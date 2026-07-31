@@ -1423,10 +1423,114 @@ just pass/fail" style.
 
 ### CI result
 
-Pushed and triggered; result pending as of this checkpoint commit — will be
-filled in immediately below once the run completes, per this task's own
-instruction to commit real progress incrementally rather than hold it for
-one final commit.
+**Compiled and linked cleanly, first try, run `30607988494`
+(`widget-host-prototype` job).** This is a genuinely useful, concrete signal
+given open question #3 above was "does `-Wl,-e,_NSExtensionMain` even
+work at all against this exact toolchain" — it does:
+
+- Only one warning, harmless and already understood: an implicit
+  `CGImageAlphaInfo`→`CGBitmapInfo` enum conversion at the `CGImageCreate`
+  call site (both enums share the same underlying values by design in real
+  CoreGraphics — this is the completely standard idiom, the warning is
+  purely a strictness note, not a correctness issue). Zero errors, zero
+  "Undefined symbols", zero `ld:` failures.
+- `otool -hv`: `MH_MAGIC_64 ARM64 E filetype=EXECUTE ncmds=25
+  sizeofcmds=2992 flags=NOUNDEFS DYLDLINK TWOLEVEL PIE` — **structurally the
+  same shape as every other unsigned test binary already proven to run on
+  this guest** (compare to `/sigkill_test`'s already-documented
+  `flags=0x200085(NOUNDEFS|DYLDLINK|TWOLEVEL|PIE)` in the SIGKILL section
+  below) — `NOUNDEFS` in particular confirms the linker fully resolved every
+  symbol reference, including the entry point.
+- `otool -l`: a real `LC_MAIN` load command, `entryoff 21092`, immediately
+  followed by ordinary `LC_ENCRYPTION_INFO_64`/`LC_LOAD_DYLIB` commands for
+  `Foundation`/`UIKit`/`QuartzCore`/`Metal` (and `CoreGraphics`/`CoreFoundation`/
+  `libobjc.A.dylib`/`libSystem.B.dylib` further down, not reproduced here) —
+  no `LC_UNIXTHREAD` fallback was needed, meaning the linker treated
+  `_NSExtensionMain` as a completely normal, valid `LC_MAIN` entry target.
+- `nm -m`'s full symbol table (checked directly, not just the `grep`
+  convenience check the CI step itself runs) shows
+  `(undefined) external _NSExtensionMain (from Foundation)` **twice** (once
+  per Objective-C `.m`→object-file compilation unit reference, both
+  resolving to the same Foundation import) — i.e. the linker genuinely
+  treated it as an ordinary lazily-bound dylib-stub symbol, exactly the
+  mechanism real Xcode-built App Extension targets are understood to use.
+  Also confirms every `InfernoWidgetHost` method (`viewDidLoad`,
+  `inferno_setUpDevice`, `inferno_renderAndPresent`, `inferno_presentPixels:...`,
+  `inferno_timerTick:`, `widgetPerformUpdateWithCompletionHandler:`,
+  `widgetMarginInsetsForProposedMarginInsets:`, `widgetAllowsEditingForCompactMode`,
+  `.cxx_destruct`) and `_OBJC_CLASS_$_InfernoWidgetHost` are present in the
+  compiled `__TEXT`/`__DATA,__objc_data` sections, i.e. the ObjC runtime will
+  genuinely be able to find and instantiate this class by name at runtime.
+
+**What this does and does not prove.** This confirms the binary is
+well-formed or at least well-formed *enough that this project's already
+much-more-experienced toolchain (`otool`/`nm`, the same tools used
+throughout the SIGKILL investigation) sees nothing wrong with it, and that
+the `-e _NSExtensionMain` linking approach this design depends on is real
+and reproducible on this exact toolchain, not a dead end. It does **not**
+prove the binary will actually get past `execve()` inside a real widget
+process's launch context (open question #2 above — untested, needs live
+verification), and it does **not** prove PlugInKit will actually treat this
+class as a valid, hostable extension once it does run (open question #1
+above — depends on facts about the target widget's `Info.plist` this
+session could not read). Both remain real, honestly-unresolved unknowns —
+this CI result narrows the risk surface by one (linking mechanics) out of
+three, not all three.
+
+### Concrete next steps for whoever picks this up (live-testing required —
+### out of scope for this session per its own hard constraint)
+
+1. **Cheapest, most information-dense first move, entirely read-only**:
+   once the guest is free (not concurrently in use by another investigation),
+   dump the target widget's `Info.plist` to learn (a) the real
+   `NSExtensionPointIdentifier` — decides whether this whole approach is
+   even viable (`com.apple.widget-extension` = yes, legacy `NCWidgetProviding`,
+   matches this design; `com.apple.widgetkit-extension` = no, WidgetKit's
+   snapshot-rendering architecture would need a fundamentally different
+   approach, see the design discussion above) — and (b) confirms the exact
+   bundle path/UUID to target. Recommended target: **`StocksWidget`**, not
+   `GeneralMapsWidget` (actively used by the concurrent MapKit investigation
+   — avoid touching it). Something like (exact tooling TBD by whoever runs
+   it — `plutil` may or may not be present on this guest, `cat`/`od` binary-
+   plist parsing is the fallback, same spirit as this project's own existing
+   `dd`/`od` Mach-O header dumps elsewhere in this doc):
+   ```
+   find /private/var/containers/Bundle/Application -iname "StocksWidget*"
+   plutil -convert xml1 -o - "<found path>/Info.plist"   # or cat + manual bplist parse if plutil is absent
+   ```
+2. **If (and only if) step 1 confirms `com.apple.widget-extension`**: edit
+   this file's `Info.plist` copy (extracted alongside the binary — not yet
+   done this session, since it requires the live read from step 1 first) to
+   point `NSExtensionPrincipalClass` at `InfernoWidgetHost` (this project's
+   own fixed, chosen class name — deliberately NOT trying to discover and
+   match Apple's original principal class name, since changing one plist
+   string is far simpler and lower-risk than guessing a private name
+   correctly). Leave `CFBundleIdentifier`, `NSExtensionPointIdentifier`, and
+   everything else in the plist untouched.
+3. Transfer `inferno_widget_host` (from the `widget-host-prototype` CI
+   artifact) to the guest, replacing the target widget's real
+   `CFBundleExecutable` binary in place (same path, same file name) — same
+   `guest_tools/transfer_binary3.py` chunked-transfer mechanism already used
+   for every other guest-side deployment in this project. Do **not** touch
+   the bundle's other files (entitlements/provisioning/other Info.plist
+   keys) beyond the one plist edit in step 2.
+4. Trigger a re-launch of the widget (e.g. respring / re-open Today View —
+   see the MapKit investigation's own notes on `SpringBoard`-restart timing
+   gotchas for what to expect/avoid) and check, in order of cost: (a)
+   `/tmp/widget_host_trace.log` on the guest for how far `WTrace()` calls got
+   (proves whether the process even launched and reached `viewDidLoad` —
+   the cheapest possible signal, no GDB needed); (b) `dmesg` for any new
+   SIGKILL-gate-shaped denial this project's existing 5 patches don't cover
+   (open question #2 above); (c) if both of those look clean, a QMP
+   screendump of the Today View to check whether the animated red triangle
+   is actually visible and moving — the real, final proof of this whole
+   session's design.
+5. If step 4 reveals a genuinely new, currently-unpatched security gate
+   (plausible, per open question #2), the exact same disassemble-first,
+   verify-then-patch methodology already used for all 5 known SIGKILL gates
+   (see the SIGKILL section below) applies directly — this would not be a
+   new investigation from scratch, just one more application of an already-
+   proven technique.
 
 
 
