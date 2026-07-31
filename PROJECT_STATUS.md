@@ -993,6 +993,144 @@ revisiting whether some *other*, not-yet-considered function (outside the
 net of candidate breakpoints for one more static-analysis pass before
 the next live attempt.
 
+### UPDATE: session wrap-up — live confirmation not achieved this session,
+### two more real findings surfaced along the way, environment left clean
+
+Picked back up exactly where the previous update left off, on a freshly
+relaunched boot (3rd restart of this task). Found **why `GeneralMapsWidget`
+never appeared at all on the 2nd restart's boot** — a plain, non-GDB
+`ps`-polling wait (`wait_for_widget.py`, cheap, dilation-free) ran the full
+15-minute safety window (guest uptime confirmed reaching ~1500s via its own
+polling) and the widget simply **never launched that boot at all**
+(`ps` showed `SpringBoard`, `WeatherWidget`, and the Maps support daemons
+`destinationd`/`mapspushd`/`navd` all present and healthy, but no
+`GeneralMapsWidget` process ever appeared). This conclusively explains that
+boot's zero-deny result without needing to doubt the op-index hypothesis at
+all: **if the widget process itself never instantiates, there is no
+possible path to a MapKit snapshot request, full stop.** This is a new,
+concrete finding in its own right: which Today-View widgets SpringBoard
+actually instantiates is **non-deterministic boot-to-boot** in this build
+(confirmed by contrast: on the very next restart, the same widget appeared
+within ~130s).
+
+**On that next (3rd) restart, with the widget confirmed present early,**
+armed the trimmed 6-candidate set immediately and, separately, **the
+device's screen turned out to be reachable and interactively usable** —
+mid-session, real interactive use of the emulated device (tapping the Maps
+app icon on the home screen) produced a **real, observed Maps app crash**.
+This is a new, unverified-cause data point: unfortunately the specific GDB
+session covering that moment was left in a stuck `paused (debug)` state
+before the crash's own kernel-log evidence could be captured (a breakpoint
+removal, `z0 open_op15_file_read_data`, didn't get a reply before a
+`KeyboardInterrupt`-based script shutdown, leaving that one breakpoint's
+trap byte in place; the immediate next `cont` re-triggered it instantly,
+producing the same "stuck, plain `cont` can't clear it" failure mode
+already documented earlier in this section) — recovered via the standard
+kill+relaunch, which necessarily lost the in-memory `dmesg` evidence from
+that specific moment (guest RAM only, not disk-persisted). **Not
+re-investigated further this session** (see "left for a future session"
+below) — but worth recording precisely, since it's the first real evidence
+in this whole investigation that (a) the emulated device's screen is
+genuinely interactive from outside the guest (via QMP `mouse_move`/
+`mouse_button`, confirmed partially working — a scripted swipe-up on the
+lock screen visibly changed the lock screen's own UI state, though it did
+not reach a full unlock in this session's attempts, likely a timing/gesture
+-recognition tuning issue rather than a fundamental blocker) and (b) Maps
+crashing on open is itself possibly relevant to this whole investigation
+(if Maps.app's own UI, not just the widget's snapshot renderer, also
+attempts real Metal device creation and crashes similarly to
+`agx_system_metal_test`'s still-unexplained pre-`main()` dyld-bootstrap
+crash documented elsewhere in this doc) — flagged as a concrete, promising
+lead for whoever continues this, not chased down further given this
+session's time budget.
+
+**A second, separate, and more serious finding surfaced during the
+mandatory post-recovery stability check**: `/compute_test` — the single
+most load-bearing sanity check used throughout this *entire* project's
+history, always previously either "IOServiceOpen succeeded... result = 42"
+or not run at all, **never previously seen to fail** — triggered a **real
+guest kernel panic** ("Kernel data abort", `pid 422: compute_test`, full
+register dump and backtrace captured from the guest serial console),
+immediately followed by **the QEMU host process itself dying silently**
+(no error in its own redirected stdout log, the process and its QMP unix
+socket both simply gone). The panic backtrace's `lr` chain (e.g.
+`0xfffffff009429138`/`0xfffffff0094290d0`/`0xfffffff009429078`) sits just
+past `CODE_BASE` (`0xfffffff009427e10`, where `patch_kernelcache.py`
+injects this project's own `InfernoVGPUHello` object code) — i.e. **the
+panic happened inside this project's own injected driver code**, not
+generic Apple kernel code. The QEMU-side log's last several hundred lines
+before the death are a tight, rapidly-repeating loop of `inferno-vgpu`
+FIFO-opcode-`0x0004` (compute-dispatch) register traffic — consistent with
+`compute_test` issuing many back-to-back dispatches right before whatever
+faulted. This is a concrete, evidenced reproduction of the previously only
+vaguely-suspected gotcha already on record in this doc ("QEMU was observed
+to die silently... during a long unattended background wait — cause
+unconfirmed") — this session's version had a directly correlated guest-side
+panic immediately preceding the death, which the earlier note didn't have,
+narrowing the likely cause toward the custom `inferno-vgpu` device/driver's
+FIFO dispatch path specifically rather than generic host idle handling.
+**Important caveat: NOT reproducible on an immediate retry** — recovered via
+the standard kill+relaunch, and a fresh `/compute_test` run immediately
+after came back completely clean (`result = 42 (expect 42)`, exit 0, no
+panic) — so this looks like a rare, state/timing-dependent race rather than
+a consistently-broken path, but it's real, it's new, and it's now on
+record with enough detail (exact panic register dump preserved in this
+session's own transcript, not reproduced verbatim here for length) for a
+future session to pick up if it recurs.
+
+**Bottom line for the MapKit `/b` sandbox-deny task specifically**: **not
+resolved this session.** The static analysis (six fully-prepared,
+byte-verified candidate patches, the shared-evaluator over-broad-patch
+rejection, the full disassembly of every plausible vnode-check hook) is
+solid, evidence-based work product, ready to apply the moment a live
+deny is actually captured. Live capture itself was not achieved despite:
+5 separate observation windows (40min, 20min, ~6.5min, ~1.7min-then-stuck,
+plus this session's widget-presence-polling and swipe attempts) across 4
+separate QEMU boots, correctly covering the historically-relevant
+guest-uptime window at least twice, an active `kill`-based widget-restart
+trigger (didn't cause a respawn), an active SpringBoard-restart trigger
+(inconclusive — GDB session got stuck before the result could be read),
+and a real observed Maps-crash-on-tap (evidence lost to a forced restart
+before it could be correlated with `dmesg`). Per this task's own explicit
+allowance for a partial, evidence-based outcome: **this is where this
+session stops.** Concrete, prioritized next steps for whoever picks this
+back up:
+1. **Cheapest, most likely to succeed**: retry the GUI-interaction path
+   from this session — a scripted QMP swipe-up **did** visibly perturb the
+   lock screen's UI (the "swipe up to open" prompt visibly faded/reset),
+   just short of a full unlock; tuning the gesture (faster motion, a real
+   multi-touch-style pressure/duration profile, or checking whether this
+   build has *no* passcode at all vs. needing a code entered afterward via
+   scripted taps on a keypad) is a bounded, concrete task, not a fresh
+   investigation — and directly opens the door to also tapping Maps
+   (already confirmed reachable and crash-producing this session) with
+   breakpoints pre-armed, which would be a fully deterministic,
+   on-demand trigger instead of waiting on any widget's own scheduling.
+2. **Most reliable, higher cost**: write a small, dedicated CI-built test
+   app using the real public `MKMapSnapshotter` API directly (this
+   project already has the whole CI/transfer/exec pipeline proven, e.g.
+   the `agx-bridge-dylib` job) — this would trigger the exact same
+   `MTLCreateSystemDefaultDevice()` → `dlopen("/b")` path as MapKit's own
+   XPC service, fully on-demand, with zero dependence on SpringBoard's
+   own widget-loading nondeterminism.
+3. **Chase the newly-observed Maps-crash-on-tap lead** (item above) — if
+   Maps.app's own UI independently reaches (and crashes at/near) the same
+   Metal-device-creation path `agx_system_metal_test` already got stuck at,
+   that's a second, independent data point on that still-unsolved crash
+   investigation, potentially more tractable than a synthetic test binary
+   since it's a real, signed, fully-provisioned system app.
+4. If a live deny is ever captured, applying the fix is now a short,
+   mechanical step — re-read the "Static analysis" subsection above for
+   the exact VAs/bytes, apply via the same live-GDB-patch-then-bake-into-
+   `patch_kernelcache.py` pattern already used for all 5 SIGKILL gates.
+
+**Environment left clean**: QEMU restarted fresh one final time after the
+`compute_test` panic (4th restart this session), `/sigkill_test` →
+`Segmentation fault: 11` (gate patches intact), `/compute_test` → clean
+`result = 42` retry (no repeat panic), `dmesg` scanned for panics/asserts
+(none on this final boot), QMP `info status` confirmed `running`, no GDB
+session left attached or breakpoints left armed.
+
 ## `agx_system_metal_test` crash investigation (2026-07-30)
 
 This is the direct answer to the open question this section used to end
