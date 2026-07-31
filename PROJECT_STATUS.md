@@ -1200,7 +1200,235 @@ Environment left clean by the script's own `finally` block: all 18
 breakpoints removed, QMP `cont` issued and confirmed (`RESUME` event seen),
 no dangling paused state.
 
-## `agx_system_metal_test` crash investigation (2026-07-30)
+## Widget-hosted Metal compositing design and prototype (2026-07-31)
+
+Direct follow-up to "Concrete next steps... 2" at the end of the App-level
+Metal reach investigation above, and item 4 of this project's standing
+priority list: design and prototype a real app that gets Metal-rendered
+content composited into the live interface by backboardd's existing,
+**completely unmodified** compositing logic, via the private
+`CAContext`/`hostingChain` mechanism that investigation confirmed is
+already live, right now, in this exact build, for real Today-View widget
+extensions.
+
+**Hard constraint honored throughout**: this was a source-editing-and-CI-only
+session — the guest serial console (4444), QMP socket, and GDB port (1234)
+were never touched, per the coordination note that the live guest was in
+concurrent, delicate use by the MapKit `/b` investigation the whole time
+(confirmed still active: `git log`/`git pull` mid-session showed that
+investigation had pushed new commits, up through
+`49225ed`, while this session was working — no conflict, since this
+section is purely additive and touches no guest state). Everything below
+is design + source + a CI compile check only; **nothing in this section has
+ever been run on the guest**, and that is explicitly the expected, correct
+stopping point per this task's own instructions.
+
+### Design pass
+
+**Starting point, and the one deliberate deviation from the task's own
+proposed shape.** The task's own suggested shape was: a process that (a)
+creates its own `CAContext`, (b) renders Metal content into an
+`IOSurface`-backed `CALayer` within that context, and (c) gets that context
+registered into another process's `hostingChain`. Re-reading the prior
+investigation's own findings closely enough to actually design against them
+(rather than just citing the shape) surfaces an important simplification:
+**(a) and (c) don't need to be built at all.** The prior investigation's own
+evidence is that `backboardd` never calls `IOSurfaceLookup`/receives a raw
+surface handle — the real Today-View widgets it already, provenly hosts get
+there via UIKit/PlugInKit's own private extension-hosting machinery, which
+*itself* is what creates the `CAContext` and registers it into the host's
+`hostingChain`, as an already-existing, completely internal implementation
+detail of "being a normal, working `NSExtension`". A brand-new freestanding
+process manually poking `CAContext`/`CARenderServer` C functions would be
+reinventing (and would first have to fully reverse-engineer, given this
+project's own repeated "no `ipsw`/DSC-parser tooling" gap) a large, private,
+undocumented protocol that UIKit/PlugInKit already implement correctly and
+already exercise live in this exact build. **Given the task's own explicit
+license to validate/adjust the proposed shape**, the actual design adopted
+here is: replace an already-installed, already-hosted widget `.appex`'s
+compiled executable in place with a new binary that is *still a normal,
+functioning `NSExtension` principal class* (so all of UIKit/PlugInKit's real
+hosting machinery keeps running, untouched, exactly as it already does for
+the real widget being replaced) — and the only thing that actually changes
+is *what draws into that principal class's view*. This reduces "get Metal
+content hosted by backboardd" to "get Metal content into a `CALayer` that's
+already part of an already-hosted view hierarchy" — a much smaller, much
+more tractable problem, and a better fit for this project's own established
+M.O. ("hand-patch/replace the existing thing" rather than "install
+something new from scratch").
+
+**Why replace-in-place beats a from-scratch `.appex` install — a stronger
+argument than "sidesteps `installd`" alone.** The task prompt already flagged
+the obvious reason (no `installd`/`MobileInstallation` provisioning flow has
+ever been attempted or built by this project). Designing against this
+project's actual, hard-won security-bypass history surfaces a second,
+independent, arguably stronger reason: **replacing an already-provisioned
+widget's binary in place inherits all 5 of this project's already-proven,
+already-permanently-baked SIGKILL-gate patches for free.** Those gates
+(`load_machfile`/`cs_process_global_enforcement`, AMFI's two
+`cred_label_update_execve` checks, Sandbox.kext's "only launchd is allowed to
+spawn untrusted binaries" and "outside of container && !i_can_has_debugger"
+checks — see the SIGKILL section below for the full table) were discovered
+and patched specifically to let an *unsigned* binary reach `execve()`
+successfully — precisely the situation a hand-compiled replacement binary
+(no real Apple signing key available) will be in here too. Two of those five
+gates are directly, favorably relevant to this exact scenario: gate #3 is
+specifically about disallowing untrusted binaries spawned by something other
+than `launchd` (already patched to never fire); gate #4 is specifically about
+being "outside of container" (already patched to never fire, and, as a
+bonus, a widget's own real bundle path — inside its app's real, legitimate
+`/private/var/containers/Bundle/Application/<UUID>/...` container — is
+arguably *not* "outside of container" in the first place, unlike this
+project's existing test binaries which mostly live loose at `/`). A
+from-scratch `.appex` install would still need every one of these same five
+gates to hold (nothing about installing fresh changes that), so this isn't
+an argument against a from-scratch install being *possible* — it's an
+argument that replace-in-place has **zero new security-bypass discovery
+risk**, reusing exactly the same, already-verified-permanent patch set this
+project already depends on for every other unsigned-binary scenario.
+
+**Design choice: `CGImage`-backed `CALayer.contents`, not
+`IOSurface`-backed, for this first prototype — a second deliberate deviation
+from the task's proposed shape, with reasoning.** Three converging reasons:
+1. This project's entire Metal render pipeline is already fundamentally
+   CPU-round-trip-based end to end — a synchronous `IOConnectCallStructMethod`
+   into the host's Vulkan renderer, then a `getBytes`-style CPU copy back
+   into an `NSMutableData` (see `inferno_render_encoder.m`'s `InfernoTexture`/
+   `InfernoSendDrawDispatch`). There is no existing GPU-resident buffer this
+   project could hand to `IOSurface` zero-copy even if it wanted to — the
+   pixels are already plain CPU memory by the time this project's own code
+   ever sees them. `IOSurface` would add real implementation risk (pixel
+   format/lock/`bytesPerRow` semantics this project has **never once**
+   exercised anywhere in its whole test suite — confirmed by the prior
+   investigation's own grep) for zero actual benefit at this stage.
+2. `CGImage`-backed `CALayer.contents` is 100% public, extremely
+   well-trodden CoreGraphics/QuartzCore API — essentially the standard way
+   any app puts a bitmap into a layer — with no private-API risk at all.
+3. Nothing in the actual success criterion ("Metal-rendered content
+   composited into the live interface by backboardd's existing, unmodified
+   compositing logic") requires `IOSurface` specifically. Any `CALayer`
+   content type that CoreAnimation's own hosting-chain protocol already
+   knows how to serialize across the `CAContext` process boundary (which,
+   per the prior investigation, is a private mechanism this project has no
+   visibility into the internals of anyway) satisfies the criterion
+   identically from backboardd's point of view — `IOSurface` was the *prior*
+   investigation's own speculative "most realistic-sounding" guess at the
+   payload shape, explicitly flagged there as "not gospel, validate/adjust
+   as you learn," not a hard requirement.
+
+`IOSurface` remains a reasonable *later* upgrade path if a genuinely
+zero-copy, GPU-resident pipeline is ever built (would need `reims-vgpu`'s
+output to land directly in an `IOSurface`-backed buffer instead of a CPU
+`getBytes`-style copy — a real, separate project, not attempted here).
+
+**A third open design question, surfaced by actually thinking through the
+mechanics rather than stopping at the high-level shape**: which widget
+*type* is actually running here? The prior investigation's `hostingChain`
+evidence is real and convergent, but it implicitly assumes the observed
+widgets are the **legacy `NCWidgetProviding`** ("Today Extension") kind —
+a real, live-hosted `UIViewController` whose `CALayer` genuinely is
+continuously composited via `hostingChain`, matching everything the prior
+investigation found. iOS 14 also shipped **WidgetKit**, a fundamentally
+different architecture: a `TimelineProvider` returns declarative
+(SwiftUI-described) view snapshots, which the *host* renders into bitmaps
+itself on some refresh cadence — no live-hosted `CALayer` view, and quite
+possibly no `hostingChain` involvement at all for actual pixel delivery
+(WidgetKit's own IPC surface wasn't specifically identified in either prior
+investigation). If the target widget is actually WidgetKit-based, this
+whole "replace the principal class, keep the view live-hosted" approach
+would not work as designed and would need real rethinking, not just
+adjustment. The one-`.appex`-per-widget process shape actually observed
+(`WeatherWidget`, `StocksWidget`, `GeneralMapsWidget`, `PhotosReliveWidget`,
+`ScreenTimeWidgetExtension` — each its own separate process) is a real,
+if indirect, point in favor of the legacy `NCWidgetProviding` model (which
+is exactly one extension per widget; WidgetKit typically hosts *all* of one
+app's widgets from a single per-app extension process) — a reasonable
+working hypothesis, not a confirmed fact. **Resolving this for certain needs
+exactly one live, read-only guest operation** (dumping the target `.appex`'s
+`Info.plist` and checking `NSExtensionPointIdentifier` — see "Concrete next
+steps" below for the exact command), which this session's hard constraint
+correctly forbids doing itself.
+
+**Target selection: deliberately NOT `GeneralMapsWidget`.** `GeneralMapsWidget`
+is the widget the concurrent MapKit `/b` sandbox-deny investigation actively
+depends on (it's the trigger for `com.apple.MapKit`'s snapshot-render XPC
+service) — killing/replacing its binary would directly interfere with that
+session's still-in-progress live work. This design instead recommends
+**`StocksWidget`** as the primary candidate for whoever does the first live
+attempt (uninvolved in any other current investigation, and its normal
+function — live stock quotes — has no working backend in this offline QEMU
+guest anyway, so replacing its binary loses nothing of value), with
+`WeatherWidget`/`PhotosReliveWidget`/`ScreenTimeWidgetExtension` as
+uninvolved fallbacks if `StocksWidget` turns out to have some other
+complication.
+
+### What was built this session
+
+**`src/userspace_test/inferno_widget_host.m`** — a new, self-contained
+Objective-C source file implementing `InfernoWidgetHost`, a `UIViewController`
+subclass meant to serve as a replacement principal class for a widget
+`.appex`. It deliberately does NOT declare formal `<NCWidgetProviding>`
+conformance (that header may not exist in whatever SDK the CI runner's Xcode
+ships, since it's been deprecated since iOS 14 — PlugInKit's own dispatch is
+`respondsToSelector:`-based, not a static protocol check, so this project's
+own established "hand-declare the ABI you need instead of depending on a
+maybe-missing header" pattern, already used for `bash_present_builtin.m`'s
+hand-declared `struct builtin`, applies directly here too). Structure:
+- `-viewDidLoad`: one-time device/pipeline setup (`dlopen("/b")` → `Q()` →
+  device → texture → two `MTLLibrary`s → `MTLRenderPipelineState` → command
+  queue — same shape as the already-proven `agx_metal_api_draw_test.m`,
+  reusing its exact AIR shader text verbatim), then an initial render, then
+  starts a repeating 1-second `NSTimer`.
+- Each timer tick re-renders (fresh vertex buffer, encoder, draw, commit,
+  `waitUntilCompleted`, `getBytes`) with the triangle's horizontal position
+  animated by a `sin(phase)` term, specifically so a genuinely live/ongoing
+  render is visually distinguishable from a static single frame if/when this
+  is ever actually screenshotted — directly contrasting with the existing
+  on-screen-triangle milestone's post-hoc genpipe-overwrite mechanism (task
+  3 of the prior investigation found that mechanism is architecturally a
+  dead end for exactly this kind of cooperative, ongoing content; this
+  file's whole point is to demonstrate the opposite, cooperative shape).
+- Each frame's readback pixels are wrapped in a `CGImageRef`
+  (`CGDataProviderCreateWithCFData` + `CGImageCreate`) and assigned directly
+  to `self.view.layer.contents` — the one and only point of contact with
+  CoreAnimation in the whole file, deliberately never touching `CAContext`/
+  `CARenderServer`/`hostingChain` APIs at all, per the design above.
+- Hand-implements `widgetPerformUpdateWithCompletionHandler:` and
+  `widgetMarginInsetsForProposedMarginInsets:` (the two `NCWidgetProviding`
+  selectors most likely to actually be invoked by the host) by selector name
+  only, matching real ABI shapes, no header dependency.
+- A `WTrace()` diagnostic helper (same rationale/shape as
+  `inferno_agx_bridge.m`'s `QTrace`) appends one line per step to
+  `/tmp/widget_host_trace.log` via raw POSIX I/O — needed because this
+  process's stdout isn't obviously reachable the way a plain `execve()`'d
+  test binary's already is, and because if anything about the
+  extension-hosting handshake goes wrong, this is likely the only way to
+  learn how far execution actually got.
+- No `main()` — real Xcode-built App Extension targets have none either;
+  the real entry point is Foundation's own exported `NSExtensionMain()`,
+  which at runtime reads the hosting bundle's own `Info.plist` to find
+  `NSExtensionPrincipalClass` and instantiate it. This file relies on the
+  same mechanism rather than reimplementing any part of the PlugInKit
+  handshake by hand.
+
+**`.github/workflows/build.yml`** — added a new `widget-host-prototype` job
+(same `continue-on-error: true`/artifact-upload conventions as every other
+job in this file) compiling `inferno_widget_host.m` against the `iphoneos`
+SDK, linking `Foundation`/`UIKit`/`QuartzCore`/`Metal`/`CoreGraphics`, with
+`-Wl,-e,_NSExtensionMain` as the entry-point override (the actual linker
+flag real Xcode App Extension targets use) — then dumping the resulting
+Mach-O's header/load-commands/linked-libraries/symbol-table for inspection,
+matching this project's own established "always show the raw evidence, not
+just pass/fail" style.
+
+### CI result
+
+Pushed and triggered; result pending as of this checkpoint commit — will be
+filled in immediately below once the run completes, per this task's own
+instruction to commit real progress incrementally rather than hold it for
+one final commit.
+
+
 
 This is the direct answer to the open question this section used to end
 with ("not yet live-verified specifically"). Once the 5 SIGKILL gates were

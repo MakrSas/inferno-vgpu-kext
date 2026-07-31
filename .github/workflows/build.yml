@@ -448,3 +448,37 @@ jobs:
           name: agx-bridge-dylib
           path: out8/
           if-no-files-found: warn
+
+  widget-host-prototype:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Compile inferno_widget_host.m as an App-Extension-shaped executable (-e _NSExtensionMain, no explicit main()) -- prototype principal class for the widget-binary-replacement strategy, see PROJECT_STATUS.md's 'Widget-hosted Metal compositing design and prototype' section"
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out9
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework UIKit -framework QuartzCore \
+            -framework Metal -framework CoreGraphics \
+            -Wl,-e,_NSExtensionMain \
+            -o out9/inferno_widget_host src/userspace_test/inferno_widget_host.m
+          file out9/inferno_widget_host
+          echo "--- Mach-O header ---"
+          otool -hv out9/inferno_widget_host
+          echo "--- load commands (need a real entry point -- LC_MAIN or LC_UNIXTHREAD -- not a link failure) ---"
+          otool -l out9/inferno_widget_host
+          echo "--- linked libraries ---"
+          otool -L out9/inferno_widget_host
+          echo "--- symbol table (sanity check: InfernoWidgetHost's ObjC class + NSExtensionMain reference should both be visible) ---"
+          nm -m out9/inferno_widget_host | grep -iE 'extensionmain|InfernoWidgetHost' || echo "NOTE: grep found nothing -- inspect the full nm output below"
+          nm -m out9/inferno_widget_host
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: widget-host-prototype
+          path: out9/
+          if-no-files-found: warn
