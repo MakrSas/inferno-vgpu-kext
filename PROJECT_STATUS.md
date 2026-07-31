@@ -899,6 +899,100 @@ candidate(s) fired, the live-verified patch, and — once baked into
 fix) as soon as it resolves, per this task's own instruction to commit
 real progress incrementally rather than wait for a single final commit.
 
+### UPDATE, same investigation: three separate observation windows all
+### came up empty; wall-clock-freeze theory checked and ruled out;
+### active triggering attempted with partial results
+
+After the section above, ran the re-timed methodology through to
+completion: a targeted 20-minute window armed right as free-running guest
+uptime crossed into the historical ~1031s mark (confirmed via `dmesg`
+timestamps reaching **`[1205.6]`** by the end of the window — i.e. this
+window did genuinely cover the exact guest-uptime range that historically
+contained the first hit, not just in wall-clock terms this time), then a
+third ~6.5-minute window that additionally tried an active trigger
+(`kill -9` on `GeneralMapsWidget`'s pid mid-window). **All three windows
+(40min free-from-t0, 20min targeted-at-1031s, ~6.5min targeted+triggered):
+zero denies**, despite healthy, correctly-classified allow-hit activity on
+every candidate in every window (hundreds of legitimate hits confirming
+the breakpoints are correctly placed and firing on real traffic, not a
+tooling failure).
+
+**Investigated the large "unmatched breakpoint hit" counts (8331 in the
+20-minute window, 2541 in the third) before concluding anything from the
+zero-deny results** — worth being sure this wasn't our own op-classification
+logic silently swallowing real hits. Extracted the actual PCs behind a
+sample of these: 18 distinct addresses scattered across completely
+unrelated kernel functions (`0xfffffff007a88e34`, `0xfffffff007b4e2c0`,
+`0xfffffff0091cbdbc`, `0xfffffff008125a14` — one instruction past the
+already-documented stale `_arm64_retention_wfi` breakpoint address — etc,
+no repeated clustering around any of our own 6 candidate VAs). This is
+consistent with, and further confirms, the already-suspected root cause of
+the earlier dilation finding: QEMU's all-stop-mode gdbstub appears to
+propagate a single thread's `s` (single-step) into incidental stepping/
+stop-reporting for *other*, unrelated vCPUs too (a known class of
+limitation for naive all-stop SMP handling, not something a plain RSP
+client can fully work around without full `vCont`-based per-thread
+control). **Conclusion: the unmatched hits are debugger-induced noise from
+stepping over our own breakpoints on a busy 7-vCPU target, not
+misclassified real hits** — they don't change the zero-deny finding's
+interpretation.
+
+**Checked the coordinator-raised "is the guest's wall clock actually
+advancing" theory directly, since MapKit/WidgetKit-style refresh
+scheduling plausibly depends on wall-clock (`NSDate`) budgets rather than
+kernel monotonic uptime, which would make it insensitive to KERNEL time
+window coverage even if that's correct — a real, distinct hypothesis from
+the already-fixed monotonic-uptime dilation.** Result: **on a freshly
+relaunched boot, disproven** — `date +%s` read twice (in-band over the
+serial console, ~29s of host wall-clock apart) advanced from
+`1785469345` to `1785469376`, i.e. ~31 guest-seconds for ~29 host-seconds,
+essentially 1:1, no measurable freeze. The earlier appearance of a "stuck"
+guest clock was almost certainly just another visible symptom of the
+already-diagnosed GDB-breakpoint dilation (halting the VM halts *every*
+clock domain uniformly, wall and monotonic alike) during the long
+breakpoint-armed windows, not a separate, independent bug.
+
+**Active-trigger attempts, mixed results.** `kill -9` on
+`GeneralMapsWidget`'s pid did **not** cause it to respawn within the
+observation window (absent from `ps` afterward) — Today-View widget
+extensions in this build apparently aren't eagerly relaunched by a
+supervisor the way a `LaunchDaemon` would be, consistent with them only
+being instantiated on-demand when something (SpringBoard's Today-View
+list) actually asks for them. Tried the stronger lever next — `kill -9` on
+`SpringBoard` itself (pid 57, to force a full "respring" and therefore a
+genuinely fresh Today-View/widget-list reload) — but this run's GDB
+session got left in a stuck `paused (debug)` state (the watcher script was
+killed with `-9` before its own `finally`/breakpoint-cleanup could run,
+after a burst of activity around the kill made serial-console responses
+intermittent enough that a clean stop point wasn't reached in time), **not
+verified whether the SpringBoard kill itself would have produced a hit**
+before the recovery restart was needed. Recovered via the standard
+kill+relaunch playbook (cheap, all patches file-baked/disk-resident,
+confirmed by the wall-clock check above already having been performed
+successfully on the resulting fresh boot).
+
+**Not yet resolved.** Three clean, correctly-timed/covered observation
+windows with zero denies is a real, if still not fully conclusive, signal
+against the original op-index hypothesis reproducing readily on every
+boot — but static evidence (the exact 2-op shape matching `open`'s own
+`0x15`/`0x1f` split and the metadata family's uniform `0x16`, see the
+static-analysis subsection above) is still reasonably strong on its own
+terms, and the SpringBoard-kill trigger was never actually completed
+cleanly. **Next step, picking back up on the freshly-relaunched boot**:
+retry the SpringBoard-kill trigger (this time with the breakpoint-removal/
+cleanup dance given more headroom, e.g. a less aggressive process-kill
+signal to the watcher itself if it needs to be stopped mid-run, or simply
+letting its own bounded deadline elapse naturally instead of `kill -9`-ing
+it) armed with the trimmed 6-candidate set, and if that also comes up
+empty, treat the original two dmesg hits as provisionally
+boot-instance-specific/non-reliably-reproducible and consider either (a)
+a much longer natural free-run (covering multiple ~31-minute-spaced
+cycles, now that the free-run methodology is cheap/dilation-free) or (b)
+revisiting whether some *other*, not-yet-considered function (outside the
+7 vnode-check hooks examined so far) is the real target, using a wider
+net of candidate breakpoints for one more static-analysis pass before
+the next live attempt.
+
 ## `agx_system_metal_test` crash investigation (2026-07-30)
 
 This is the direct answer to the open question this section used to end
