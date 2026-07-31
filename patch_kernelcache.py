@@ -50,17 +50,23 @@ OLD_IOCLASS_AGX = b"<key>IOClass</key><string>AGXAcceleratorG12P_B0</string>"
 NEW_IOCLASS_AGX = b"<key>IOClass</key><string>InfernoVGPUHello</string>"
 
 # ---------------------------------------------------------------------------
-# SIGKILL-gate byte patches (baked in permanently, 2026-07-30 session).
+# Security-gate byte patches (gates #1-#4 baked in permanently in the
+# 2026-07-30 session; gate #6 added 2026-07-31 -- see its own entry below for
+# why the numbering skips #5, which remains a documented-but-unresolved
+# candidate, see PROJECT_STATUS.md's iokit-open/entitlement investigation).
 #
-# Five independent kernel security gates were found live-patching every
-# freshly-transferred unsigned MAIN EXECUTABLE into an instant `Killed: 9`
-# at exec time (see PROJECT_STATUS.md's "CRITICAL: the SIGKILL mystery"
-# section for the full derivation of each one -- breakpoint traces,
-# disassembly, live verification). All five were previously only ever
-# applied in-memory via GDB against the running QEMU process, and were lost
-# on every restart. This table makes them permanent, file-level patches,
-# applied the same way as everything else in this script (straight
-# file-offset byte replacement via va2off).
+# Gates #1-#4: four independent kernel security gates were found
+# live-patching every freshly-transferred unsigned MAIN EXECUTABLE into an
+# instant `Killed: 9` at exec time (see PROJECT_STATUS.md's "CRITICAL: the
+# SIGKILL mystery" section for the full derivation of each one -- breakpoint
+# traces, disassembly, live verification). All four were previously only
+# ever applied in-memory via GDB against the running QEMU process, and were
+# lost on every restart. This table makes them permanent, file-level
+# patches, applied the same way as everything else in this script (straight
+# file-offset byte replacement via va2off). Gate #6 (added below) is a
+# structurally different check (file-write-data, not exec-time) found in a
+# later session -- kept in the same table/mechanism since the patch
+# machinery is identical.
 #
 # Each entry is (VA, orig_bytes, new_bytes, description). Before writing,
 # the bytes actually present at that file offset are asserted to exactly
@@ -97,6 +103,21 @@ SIGKILL_GATE_PATCHES = [
         bytes.fromhex("08060034"),
         bytes.fromhex("1f2003d5"),
         "gate #4: Sandbox hook_cred_label_update_execve NOP cbz, ignore \"outside of container...\" check",
+    ),
+    (
+        0xfffffff0092a25b4,
+        bytes.fromhex("f50300aa"),
+        bytes.fromhex("15008052"),
+        "gate #6: Sandbox hook_vnode_check_open op 0x1f (file-write-data), "
+        "force-allow capture register -- found 2026-07-31 live-patching the "
+        "app-container write needed to swap StocksWidget's binary in place; "
+        "see PROJECT_STATUS.md's 'A 6th, previously-undiscovered security "
+        "gate' section. NOT an exec-time kill gate like #1-#4 above (this "
+        "one guards file-write-data via a MACF vnode-check hook, not "
+        "process exec) -- kept in this same table/file per that section's "
+        "own recommended next step, since the mechanics (disassemble-first, "
+        "minimal single-instruction patch, verify-before-write) and the "
+        "permanence-baking machinery below are identical either way.",
     ),
 ]
 
