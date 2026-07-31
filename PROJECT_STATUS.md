@@ -670,6 +670,235 @@ worth keeping individual command lines short (a few hundred characters)
 over this link, consistent with the file-transfer tooling's own
 already-documented `CHUNK=100`-byte-per-line lesson.
 
+## MapKit `/b` sandbox-deny investigation (2026-07-31, in progress)
+
+Direct follow-up to "Concrete next steps... 1." at the end of the
+App-level Metal reach investigation immediately above: find and patch the
+exact kernel check responsible for the `Sandbox: com.apple.MapKit(NNN)
+deny(1) file-read-{metadata,data} /b` denial, so MapKit's own real,
+unmodified `MTLCreateSystemDefaultDevice()` call (already confirmed
+reaching our `___MTLCreateSystemDefaultDevice_block_invoke` patch) can
+actually `dlopen("/b")` successfully. **Not yet complete** — static
+analysis and patch-byte preparation are done and high-confidence; live
+verification is still in progress as of this writing, delayed by a
+methodological discovery documented below. This section will be updated
+again once live-verified and baked in; committing now per this session's
+own instruction to land progress incrementally rather than hoard it.
+
+**Recovered environment state first.** QEMU (same pid as the prior
+session) was found with the debug port genuinely stuck in `paused
+(debug)` — `info status` showed this consistently across a 15s polling
+window, and a plain QMP `cont` did not clear it (matching the exact
+"stuck paused, cont can't clear it" gotcha already documented in the
+SIGKILL section's methodology notes). Root cause: the scratchpad directory
+for this task (same session ID as a prior, interrupted attempt) contained
+`mapkit_sandbox/verify_gate_mapkit.py`, a never-completed live-verification
+script from that earlier attempt — it had gotten as far as identifying
+candidate breakpoint addresses (see below, all independently re-derived
+and confirmed by this session too) but apparently left a breakpoint
+session dangling mid-flight when it was interrupted. Fixed the only way
+this doc's own playbook allows: killed and relaunched QEMU (cheap, since
+all patches — the 5 SIGKILL gates and the block_invoke DSC patch — are
+disk-resident/file-baked, confirmed intact immediately after via
+`/sigkill_test` → `Segmentation fault: 11`, not `Killed: 9`).
+
+### Static analysis: found and disassembled every plausible candidate check
+
+**Step 1: confirmed the master sandbox operation-name string table.**
+`strings`-equivalent scan of `kernelcache.decompressed` around file offset
+`0x559000` found Apple's real, alphabetically-*grouped* (not strictly
+alphabetical — e.g. `device*`/`device-camera`/`device-microphone` are
+grouped before `darwin-notification-post`, so operation index cannot be
+assumed to equal simple alphabetical position) master operation-name
+string blob, containing `file-read-data` (file offset `0x5590a1`) and
+`file-read-metadata` (file offset `0x5590b0`) as literal, distinct,
+null-terminated C strings — confirming these are real, first-class
+Sandbox.kext operation names, not something this project's own guessing
+invented. Searched for a raw 8-byte pointer table referencing either
+string's VA anywhere in the file: **zero matches** — the kernel doesn't
+have a static `name[op_index]` pointer array; op-index-to-name mapping (if
+it exists at all in compiled code, as opposed to only in profile-compiler
+tooling) isn't done via a simple indexed pointer table. This ruled out
+"trace the string to its owning function via ADRP+ADD" (the exact
+technique used for gate #2a/#2b/#3/#4's AMFI/Sandbox strings) as a
+practical path here — unlike `"dyld signature cannot be verified"` etc,
+which are printed as literal per-call-site format strings, `file-read-data`/
+`file-read-metadata` appear to only exist as compile-time-only names for
+whatever tool generates Sandbox.kext's operation-index table, not as
+runtime-loaded strings referenced by `ADRP`+`ADD` anywhere in `__TEXT_EXEC`
+(confirmed: 92 ADRP instructions land on that string's page, zero of them
+feed a matching ADD/LDR within a 5-instruction lookahead window).
+
+**Step 2: found every plausible check by disassembling the actual MACF
+vnode-check hooks directly, using their own hardcoded op-index immediates
+instead.** Every `hook_vnode_check_*` function passes a literal op index
+(`movz w1, #N`) to either a shared wrapper, `_cred_sb_evaluate`
+(`0xfffffff0092a0378`), or (for `open`/`access`, which need extra
+pre/post logic) directly to the real shared bytecode evaluator,
+`0xfffffff0092a9ef4`. Disassembled (own extension of `mini_disasm.py`,
+reused unmodified) every function in the vnode-check family that could
+plausibly back a `dlopen("/b")`'s metadata-probe + actual open+mmap, and
+found the exact op-index each one uses:
+
+| function | VA | evaluate call | op | plausible role |
+|---|---|---|---|---|
+| `hook_vnode_check_open` | `0xfffffff0092a242c` | direct → `0x92a9ef4` | `0x15` **and** `0x1f` (2nd only if flags & 0x402) | the real `open()`/`dlopen()` data-read check |
+| `hook_vnode_check_access` | `0xfffffff0092a3524` | direct → `0x92a9ef4` | `0x15`, `0x1f`, `0x67` (each gated by a separate flag bit) | `access()`-based probe (less likely for dlopen, checked for completeness) |
+| `hook_vnode_check_getattr` | `0xfffffff0092a3e64` | `cred_sb_evaluate` | `0x16` | `stat()`/`fstat()`-family metadata probe |
+| `hook_vnode_check_stat` | `0xfffffff0092a1c0c` | `cred_sb_evaluate` | `0x16` | `stat()` syscall metadata probe |
+| `hook_vnode_check_readlink` | `0xfffffff0092a23b0` | `cred_sb_evaluate` | `0x16` | symlink-resolution metadata probe |
+| `hook_vnode_check_getattrlist` | `0xfffffff0092a2ccc` | `cred_sb_evaluate` | `0x16` | `getattrlist()` metadata probe |
+| `hook_vnode_check_lookup_preflight` | `0xfffffff0092a0c08` | `cred_sb_evaluate` | `0x1a` | unrelated (file-search-ish), kept only as a completeness check |
+
+Given the two actual dmesg lines are `file-read-metadata` and
+`file-read-data` (exactly two, not more), and `open`'s own two checks are
+`0x15`/`0x1f` while every metadata-ish hook above uniformly uses `0x16`,
+the working hypothesis (consistent with, though not yet proven identical
+to, the interrupted prior attempt's own labeling) is **op `0x15` =
+file-read-data, op `0x16` = file-read-metadata** — the *shape* of the
+evidence (exactly 2 ops, matching exactly 2 dmesg lines, `open` uniquely
+supplying one of them) is strong even without the string-table index
+independently confirming the exact numbers; live correlation (in
+progress) is the real confirmation step, precisely because a static
+numeric coincidence isn't proof.
+
+**Step 3: explicitly ruled out patching the shared wrapper/evaluator —
+too broad.** Before settling on a per-call-site patching strategy,
+checked how many distinct call sites use `_cred_sb_evaluate`
+(`0xfffffff0092a0378`): **103 separate `BL` callers**, spanning
+`hook_kext_check_load` through dozens of unrelated `hook_sysv*`/`hook_iokit*`
+functions — i.e. this is Sandbox.kext's *generic* single-op-evaluate
+wrapper, used far beyond just the file-read family. Patching it (or the
+even-more-shared inner evaluator at `0x92a9ef4`) would be a
+`cs_process_global_enforcement`-style hammer disabling a huge swath of
+unrelated sandbox checks system-wide — ruled out as inconsistent with
+this project's own "minimal, per-check, disassemble-first" precedent.
+**The patch must live at each specific hook's own call site**, matching
+exactly how gate #2a/#2b (two independent checks inside the very same
+`cred_label_update_execve`) were kept separate.
+
+**Step 4: disassembled each candidate's own post-call code to find the
+minimal correct per-site patch — and found the shapes genuinely differ**,
+same as gates #1 vs #2b/#3/#4 differed:
+
+- `hook_vnode_check_open`, op `0x15`: clean branch-based shape —
+  `bl 0x92a9ef4` → `mov x21,x0` → **`cbnz w21, 0xfffffff0092a25c0`**
+  (taken = early-return-with-denial; not-taken = falls into the op-`0x1f`
+  write check, exactly the normal continue path). Minimal patch: **NOP the
+  `cbnz`** at `0xfffffff0092a252c` (orig `b5040035` → `1f2003d5`) — same
+  reasoning as gate #2b/#3/#4 (not-taking the branch already is the
+  correct continuation).
+- `hook_vnode_check_access`, op `0x15`: identical shape —
+  `cbnz w22, 0xfffffff0092a3768` at `0xfffffff0092a3644` (orig `36090035`
+  → NOP `1f2003d5`). Prepared for completeness; only needed if live
+  evidence shows `access()` rather than `open()` is actually in play.
+- `hook_vnode_check_getattr`, op `0x16`: **no early-return branch at
+  all** — `bl 0x92a0378` → **`mov x20,x0`** (a local copy, unique to this
+  call site) → later, a `tbz x0,#37,...` gates only whether to *also*
+  populate some extended-attribute fields, but **every path** ultimately
+  does `mov x0,x20` before `ret`, i.e. the real allow/deny result is a
+  pure, unconditional passthrough of whatever `x20` holds. Minimal patch:
+  since `mov x20,x0` is a call-site-local instruction (not shared),
+  replace it with **`movz x20,#0`** at `0xfffffff0092a3f00` (orig
+  `f40300aa` → `140080d2`) — lets `cred_sb_evaluate` (and its own internal
+  logging/evaluation side effects) run exactly as before, just discards
+  the result at this one call site, consistent in spirit with the
+  gate-family precedent of "let the real check run, override what happens
+  with its result."
+- `hook_vnode_check_stat` / `hook_vnode_check_readlink` /
+  `hook_vnode_check_getattrlist`, op `0x16`: even more trivial than
+  `getattr` — **no capture register at all**, the return point is
+  *directly* the function epilogue (`ldp x29,x30,...` reading `x0`
+  unmodified as the return value). There's no free instruction to
+  overwrite without corrupting the epilogue's frame-pointer/LR restore.
+  Minimal patch here has to be shaped differently: since there's no room
+  to insert anything, replace the **`bl 0x92a0378` call itself** (still a
+  single, call-site-scoped 4-byte swap, same size in/out) with
+  **`movz x0,#0`** — skips invoking the shared evaluator for this one
+  call site only (so its side effects, e.g. any internal logging, are
+  skipped for this specific site, but no other of the 103 callers is
+  touched). Exact bytes: `stat` @ `0xfffffff0092a1c80` (orig `bef9ff97` →
+  `000080d2`), `readlink` @ `0xfffffff0092a2418` (orig `d8f7ff97` →
+  `000080d2`), `getattrlist` @ `0xfffffff0092a2d34` (orig `91f5ff97` →
+  `000080d2`). All three verified byte-for-byte against the static
+  `kernelcache.decompressed` file directly (not just against earlier live
+  dumps) before finalizing.
+
+All six candidate patches above are fully prepared (bytes computed and
+independently round-tripped through `mini_disasm.py`'s own decoder to
+confirm each encodes what it's meant to) but **not yet applied anywhere**
+— live evidence is needed first to know which 1–2 of the six are actually
+the ones MapKit's `dlopen("/b")` hits, per this task's own explicit
+instruction not to patch blind.
+
+### Live verification: in progress, one major methodological pitfall found and fixed along the way
+
+Armed all ten candidates (the six above plus the three `access()` variants
+and `lookup_preflight`, kept during the first pass for completeness) via a
+hand-rolled RSP client (`gdb_rsp2.py`, reused unmodified) on a **freshly
+relaunched** QEMU (to catch the documented ~1031s/~2894s early-boot window
+from `t=0`, since the current long-uptime boot's dmesg buffer no longer
+contained either historical hit — the ring buffer had long since wrapped
+past them). Also added proper `Hg<tid>`-based thread-scoping (parsing the
+`T05thread:NN;` field out of every stop reply before any `g` register
+read) as a robustness improvement over the interrupted prior attempt's own
+script, per this project's own documented SMP-misattribution risk.
+
+**First full pass (40 minutes wall-clock, `WALL_CLOCK_DEADLINE_S=2400`):
+zero denies on any candidate**, despite substantial, healthy allow-hit
+activity confirming every breakpoint address is correct and genuinely
+"hot" code (e.g. 76 hits on `open`'s op-`0x15` check, 142 on
+`lookup_preflight`). Initially ambiguous — could have meant the hypothesis
+was wrong, or that this boot's MapKit renderer just didn't fire.
+
+**Root-caused via a direct comparison against the guest's own kernel-uptime
+clock, not just wall-clock:** `dmesg`'s own bracketed timestamps (which
+tick with genuine guest CPU execution, the same clock the historical
+`[1031.098551]`/`[2894.476932]` marks used) had only reached **`[
+200.512945]`** by the end of the 40-minute (2400s) wall-clock observation
+window. **This is the real explanation, not a disproof of the hypothesis:
+2400 seconds of host wall-clock time only advanced the guest's own clock
+by ~200 seconds — roughly 12x dilation** — meaning the watch never
+actually reached the historical ~1031s guest-uptime mark in the units
+that matter, despite comfortably exceeding it in host wall-clock terms.
+Confirmed this is specifically caused by keeping GDB software breakpoints
+armed continuously (QEMU's gdbstub appears to impose a large, cumulative
+overhead — whether from the sheer volume of stop/step/reinsert round
+trips this hand-rolled Python RSP client requires, 19,024 of them over the
+40-minute window, or from QEMU/TCG's own internal slower code-generation
+mode whenever any software breakpoint is active, wasn't further
+root-caused — the fix doesn't require knowing which): a clean, controlled
+before/after check with **zero** breakpoints armed and **no GDB client
+connected at all** showed guest uptime advancing by ~60–73 seconds across
+a 73-second host wall-clock window — i.e. **~1:1, no measurable
+dilation**, confirming breakpoints (not something else, like general host
+load) are the specific cause.
+
+**Methodology fix for future long passive waits on this platform,
+worth remembering project-wide, not just for this task:** never leave GDB
+software breakpoints armed for a long unattended wait when the trigger
+timing is only loosely known. Instead: let the guest run completely free
+(no debugger attached at all) for the bulk of the wait, tracking progress
+via cheap, non-pausing guest-shell polling (`uptime`, not `dmesg` — a
+first attempt at polling `dmesg` for the latest timestamp was itself
+briefly misleading, since `dmesg` can go log-quiet for a couple of minutes
+at a time, which looks identical to "guest time has stalled" if you're
+only checking the newest log line's timestamp; the guest's own `uptime`
+command output doesn't have that ambiguity), and only arm breakpoints
+reactively for a short, targeted window once guest-uptime is close to the
+expected mark.
+
+**Status as of this commit**: re-armed with a trimmed 6-candidate set
+(dropped `lookup_preflight` and the 3 `access()` variants — zero hits
+across the entire first pass, lower prior probability, purely to reduce
+per-hit overhead during the now-short active window) once free-running
+guest uptime approached the historical ~1031s mark. Live capture is
+in progress; this section will be updated with the actual result (which
+candidate(s) fired, the live-verified patch, and — once baked into
+`patch_kernelcache.py` and verified via a real restart — the permanent
+fix) as soon as it resolves, per this task's own instruction to commit
+real progress incrementally rather than wait for a single final commit.
+
 ## `agx_system_metal_test` crash investigation (2026-07-30)
 
 This is the direct answer to the open question this section used to end
