@@ -4983,3 +4983,34 @@ urgency left no safe time budget for a rebuild-and-reboot-verify cycle.
    sufficient, and the `_CodeSignature/CodeResources`-patching half of
    direction (a) (or the kernel-patch direction (b)) from the
    container-signature-cascade section above is the next real step.
+
+## UPDATE (2026-07-31, end of day, orchestrating session): Gate #6 is now
+## PERMANENTLY baked and verified — every earlier "memory only, won't
+## survive a restart" note above is now stale/superseded
+
+The host machine this whole project runs on was about to be shut down for
+the day. Rather than leave gate #6 (file-write-data into an app container —
+needed to swap any widget/app binary in place, see the "6th, previously
+undiscovered security gate" section) as a live-GDB-memory-only patch that
+would evaporate the instant QEMU died, ran `python3 patch_kernelcache.py`
+(it was already correctly present in `SIGKILL_GATE_PATCHES`, just never
+actually re-run+verified since being added) — output confirmed all 6 gates
+applied, including gate #6 at VA `0xfffffff0092a25b4`. Killed and relaunched
+QEMU fresh, confirmed `/sigkill_test` → `Segmentation fault: 11` and
+`/compute_test` → `result = 42` (gates #1-#5 intact as always), then
+specifically re-ran the exact gate #6 regression check from its own
+original section (`dd if=/StocksWidget.orig of=<StocksWidget's real bundle
+path> conv=notrunc`, after `/sbin/mount -uw /`) on this completely fresh
+boot: **`DD_EXIT:0`, write succeeded.** Gate #6 is now exactly as permanent
+and disk-resident as gates #1-#5, verified with a real restart the same way
+every other permanent patch in this project has been. Every prior mention
+in this doc of gate #6 being "live-patched in memory only" / "won't survive
+a restart" is now out of date — safe to build on as a permanent fact going
+forward, same as the original 5.
+
+No other changes made this update — purely making an already-designed,
+already-tested patch permanent before a planned host shutdown, per the
+project's own established "always bake a verified patch into the permanent
+table before ending a session" discipline (see how gates #1-#5 themselves
+were handled). Environment left running and healthy at time of writing;
+this is the last action taken before the host shuts down.
