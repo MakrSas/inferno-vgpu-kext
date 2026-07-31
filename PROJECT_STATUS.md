@@ -2726,6 +2726,128 @@ unpatched SIGKILL-style gate? the same pre-`main()` dyld crash signature
 documented elsewhere in this file?) is itself real, useful information for
 whoever designs the next iteration.
 
+### A 6th, previously-undiscovered security gate, found and live-patched:
+### app-container writes are blocked for non-`_installd` processes
+
+Attempting even the very first mechanical step — backing up the original
+`StocksWidget` binary before overwriting it — hit a brand-new wall,
+independent of everything above: `cp
+.../StocksWidget.appex/StocksWidget .../StocksWidget.appex/StocksWidget.orig`
+failed with `Operation not permitted`, and so did a plain `touch` of a new
+file anywhere under
+`/private/var/containers/Bundle/Application/<UUID>/...` — even though the
+calling shell is root (`uid=0`) and the target directory's own POSIX
+permissions (`_installd:_installd`, `rwxr-xr-x`) don't obviously forbid it.
+`dmesg` showed the real cause, a message shape not seen before in this
+project's SIGKILL/Sandbox investigations:
+```
+System Policy: cp(2805) deny(1) file-write-create /private/var/containers/Bundle/Application/.../StocksWidget.appex/StocksWidget.orig
+System Policy: touch(2811) deny(1) file-write-create /private/var/containers/Bundle/Application/.../StocksWidget.appex/probe.txt
+```
+(the `System Policy:` tag, as opposed to `Sandbox: <proc> deny(1) ...`, was
+already seen twice before in this document — the `/private/var/tmp`
+`process-exec*` denial and the `iokit-open`/`com.apple.security.iokit-user-client-class`
+entitlement denial — confirming it's a real, distinct message class, not a
+typo or one-off.) This is, at root, a *genuine and correct* iOS protection
+(installed-app bundle content is normally `_installd`/`MobileInstallation`-only
+to write, even for root, on real hardware too) — this project just hadn't
+needed to write into an app container before.
+
+**Found and live-patched using the exact same disassemble-first technique
+as every other gate in this document — no live guest interaction needed for
+the analysis itself**, since the target function lives in the same
+`kernelcache.decompressed` file this project already keeps locally
+(`/home/makr/Documents/Inferno/InfernoData/kernelcache.decompressed`) and
+`patch_kernelcache.py` already exports a reusable `va2off()` helper — this
+whole investigation was done by direct offline Python analysis (own small
+correctly-verified-by-hand ARM64 decoder, hand-checked bit-by-bit against
+the ARMv8 reference encoding for the two instructions that mattered, since
+this session had no access to the scratch `mini_disasm.py` from a prior,
+different session), reading `guest_tools/gdb_rsp2.py`'s `RSP` client class
+for the actual live-patch step.
+
+The concurrent MapKit `/b` investigation (see that section) had already
+statically identified `hook_vnode_check_open`
+(`0xfffffff0092a242c`) as handling **two** MACF operation indices in one
+function: op `0x15` (hypothesized `file-read-data`) unconditionally, and op
+`0x1f` conditionally, only "if flags & 0x402" — but had never disassembled
+that second, conditional branch (its own task was about reads, not
+writes). Disassembling it this session (offline, against the static
+`kernelcache.decompressed`) shows the exact shape:
+```
+0xfffffff0092a24ac: tbz  x20, #0, 0xfffffff0092a2530   ; skip op-0x15 block if bit0 clear
+...op-0x15 block (evaluate(op=0x15), capture into x21, no early branch)...
+0xfffffff0092a2530: movz w8, #0x402                     ; flags-need-write-check test
+... (AND/TST + B.cond, gates whether the block below runs)
+0xfffffff0092a2590: movz w8, #0x1f
+0xfffffff0092a25ac: movz w1, #0x1f
+0xfffffff0092a25b0: bl   0xfffffff0092a9ef4              ; SAME shared evaluator as op 0x15
+0xfffffff0092a25b4: mov  x21, x0                          ; <-- capture op-0x1f's result (PATCHED)
+0xfffffff0092a25b8: b    0xfffffff0092a25c0                ; (skips the flags-didn't-need-it path)
+0xfffffff0092a25bc: movz w21, #0x0                        ; flags-didn't-need-it path: force-allow
+0xfffffff0092a25c0: ...
+0xfffffff0092a25d0: mov  x0, x21                           ; unconditional passthrough -> return value
+0xfffffff0092a25e8: ret
+```
+Same shape as the already-documented `hook_vnode_check_getattr` patch
+(op `0x16`): no early-return branch gates this specific op, the result is a
+pure passthrough of whatever the capture register holds at the very end.
+**Minimal patch, matching that same established style exactly**: at VA
+`0xfffffff0092a25b4`, replace `mov x21, x0` (`f5 03 00 aa` LE) with `movz
+w21, #0` (`15 00 80 52` LE) — reusing the *exact same instruction encoding*
+already present 8 bytes later in this very function for the
+"flags-didn't-need-this-check" path, so it's not even a novel instruction
+sequence, just relocating one already-proven-valid encoding to a second
+site. Independently hand-verified both the original and replacement
+encodings bit-by-bit against the ARMv8 reference (logical-shifted-register
+and MOVZ formats) before writing, given no live disassembler was available
+this session.
+
+**Live-patched via GDB (`gdb_rsp2.py`'s `RSP` client, one-off script), fully
+verified, in-memory only (does NOT survive a QEMU restart — same caveat as
+the original 5 SIGKILL gates before they were baked permanently):**
+asserted current bytes matched the expected original (`f50300aa`) before
+writing (per this project's own "never patch blind" rule) — matched — wrote
+`15008052`, read back to confirm. QMP `cont` issued immediately after
+(wrapped in the reused script's own `finally`), confirmed VM `running`
+again via `info status` before touching the guest further.
+
+**Empirically confirmed fixed, with an important nuance**: `dd
+if=/StocksWidget.orig of=<the real StocksWidget path> conv=notrunc` (an
+in-place, no-new-vnode overwrite) now succeeds (`EXIT=0`, correct byte
+count) — as does plain `dd` **without** `conv=notrunc` (which truncates the
+target to the new content's length, useful since the real replacement
+binary is a different size than the original). **`cp`/`touch` targeting a
+genuinely new filename in the same directory still fails** — confirming
+`file-write-create` (new vnode) is a **separate, still-unpatched** check
+from `file-write-data` (write into/truncate an existing vnode), almost
+certainly XNU's real, architecturally-distinct `vnode_check_create` hook
+rather than another branch inside `hook_vnode_check_open` — not
+investigated further since it isn't needed for this task (the backup was
+instead made by copying the original *out* to `/StocksWidget.orig`, a
+path outside the container restriction entirely, which was already
+unrestricted and worked on the first try). One more confirmed-benign
+wrinkle: `dmesg` keeps logging `System Policy: dd(...) deny(1)
+file-write-data ...` for every write **even after the patch**, despite the
+write actually succeeding — consistent with (and further evidence for) the
+same conclusion already drawn for the `hook_vnode_check_getattr` patch:
+the shared bytecode evaluator (`0xfffffff0092a9ef4`) does its own internal
+deny-logging as a side effect of evaluating the profile, independent of
+what the calling hook function goes on to do with the result — the log
+line is *not* proof of an actual continuing enforcement, only proof the
+profile bytecode itself still says "would have denied this."
+
+This gate is currently **live-patched in memory only** — not yet added to
+`patch_kernelcache.py`'s permanent `SIGKILL_GATE_PATCHES` table (would
+require a full QEMU kill+relaunch to verify against a fresh boot, which
+this session deferred in favor of spending the time budget on the actual
+widget-hosting live test this gate exists to unblock). **Recommended
+next step for a future session**: add `(0xfffffff0092a25b4,
+bytes.fromhex("f50300aa"), bytes.fromhex("15008052"), "gate #6: Sandbox
+hook_vnode_check_open op 0x1f (file-write-data), force-allow capture
+register")` to that table and re-verify after a real restart, the same way
+the original 5 were made permanent.
+
 ## CRITICAL: the SIGKILL mystery and its workaround
 
 **Every freshly-transferred, unsigned MAIN EXECUTABLE binary on the guest
