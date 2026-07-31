@@ -604,6 +604,55 @@ class DSC:
     # this project's own "say what's actually verified" style.) -----------
     FAST_DATA_MASK = 0x00007ffffffffff8
 
+    def _ivar_list(self, va):
+        """struct ivar_t { int32_t *offset; const char *name; const char
+        *type; uint32_t alignment_raw; uint32_t size; } -- fixed 32-byte
+        entries (entsize_list_tt<ivar_t, ivar_list_t, 0>, FlagMask=0 so no
+        small-list concept applies to ivars at all, unlike methods)."""
+        off = self.vm_to_file(va)
+        if off is None:
+            return []
+        entsizeAndFlags, count = struct.unpack_from("<II", self.data, off)
+        entsize = entsizeAndFlags  # FlagMask=0 for ivar_list_t
+        base = off + 8
+        out = []
+        for i in range(count):
+            eoff = base + i * entsize
+            offset_ptr, name_ptr, type_ptr, alignment_raw, size = \
+                struct.unpack_from("<QQQII", self.data, eoff)
+            offset_va = strip_ptr(offset_ptr)
+            ivar_offset = None
+            if offset_va:
+                ooff = self.vm_to_file(offset_va)
+                if ooff is not None:
+                    ivar_offset = struct.unpack_from("<i", self.data, ooff)[0]
+            out.append({
+                "name": self.read_cstr(strip_ptr(name_ptr)),
+                "type": self.read_cstr(strip_ptr(type_ptr)),
+                "size": size,
+                "offset": ivar_offset,
+            })
+        return out
+
+    def _property_list(self, va):
+        """struct property_t { const char *name; const char *attributes; }
+        -- fixed 16-byte entries (FlagMask=0)."""
+        off = self.vm_to_file(va)
+        if off is None:
+            return []
+        entsizeAndFlags, count = struct.unpack_from("<II", self.data, off)
+        entsize = entsizeAndFlags
+        base = off + 8
+        out = []
+        for i in range(count):
+            eoff = base + i * entsize
+            name_ptr, attrs_ptr = struct.unpack_from("<QQ", self.data, eoff)
+            out.append({
+                "name": self.read_cstr(strip_ptr(name_ptr)),
+                "attributes": self.read_cstr(strip_ptr(attrs_ptr)),
+            })
+        return out
+
     def _class_ro(self, class_ro_va):
         off = self.vm_to_file(class_ro_va)
         if off is None:
@@ -612,6 +661,8 @@ class DSC:
         (ivarLayout, name, baseMethodList, baseProtocols, ivars,
          weakIvarLayout, baseProperties) = struct.unpack_from("<QQQQQQQ", self.data, off + 16)
         is_small, methods = self._method_list(strip_ptr(baseMethodList)) if strip_ptr(baseMethodList) else (False, [])
+        ivars_va = strip_ptr(ivars)
+        props_va = strip_ptr(baseProperties)
         return {
             "va": class_ro_va,
             "flags": flags,
@@ -620,6 +671,8 @@ class DSC:
             "name": self.read_cstr(strip_ptr(name)),
             "baseMethods": [{"sel": s, "types": t} for s, t, _ in methods],
             "baseMethods_small": is_small,
+            "ivars": self._ivar_list(ivars_va) if ivars_va else [],
+            "properties": self._property_list(props_va) if props_va else [],
         }
 
     def find_classes(self, path_filter, name_filter):
@@ -732,9 +785,15 @@ def main():
                 continue
             print(f"    class_ro_t @ {ro['va']:#x}  name={ro['name']!r}  "
                   f"flags={ro['flags']:#x}  instanceSize={ro['instanceSize']}  "
-                  f"methods={len(ro['baseMethods'])} (small={ro['baseMethods_small']})")
+                  f"methods={len(ro['baseMethods'])} (small={ro['baseMethods_small']})  "
+                  f"ivars={len(ro['ivars'])} properties={len(ro['properties'])}")
             for m in ro["baseMethods"]:
                 print(f"      - {m['sel']}   {m['types']}")
+            for iv in ro["ivars"]:
+                print(f"      ivar: {iv['name']}  type={iv['type']!r}  "
+                      f"offset={iv['offset']}  size={iv['size']}")
+            for p in ro["properties"]:
+                print(f"      property: {p['name']}  attrs={p['attributes']!r}")
             print()
     else:
         print(f"unknown command: {cmd}")

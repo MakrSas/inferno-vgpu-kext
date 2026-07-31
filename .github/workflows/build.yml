@@ -507,6 +507,26 @@ jobs:
           nm -m out9/inferno_widget_host_main | grep -iE '\bmain\b|extensionmain' || echo "NOTE: grep found nothing -- inspect the full nm output below"
           nm -m out9/inferno_widget_host_main
 
+      - name: "Compile inferno_widget_host_xpc.m -- real HostToExtensionXPCInterface-shaped NSXPCListener responder (real selectors/type-encodings from dsc_parse.py objc-protocol against WidgetKit.framework), using +[NSXPCListener serviceListener] since StocksWidget.appex/Info.plist's CFBundlePackageType is XPC! -- see PROJECT_STATUS.md's widget-hosting XPC-protocol section for the full derivation"
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p out9
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework Metal \
+            -o out9/inferno_widget_host_xpc src/userspace_test/inferno_widget_host_xpc.m
+          file out9/inferno_widget_host_xpc
+          echo "--- Mach-O header ---"
+          otool -hv out9/inferno_widget_host_xpc
+          echo "--- load commands (need a real LC_MAIN pointing at a compiled main(), not an -e override) ---"
+          otool -l out9/inferno_widget_host_xpc
+          echo "--- linked libraries ---"
+          otool -L out9/inferno_widget_host_xpc
+          echo "--- symbol table (sanity check: InfernoWidgetXPCResponder + protocol method selectors should all be visible) ---"
+          nm -m out9/inferno_widget_host_xpc | grep -iE 'InfernoWidgetXPCResponder|getDescriptors|getTimeline|extensionmain' || echo "NOTE: grep found nothing -- inspect the full nm output below"
+          nm -m out9/inferno_widget_host_xpc
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
