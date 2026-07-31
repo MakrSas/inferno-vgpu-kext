@@ -2595,6 +2595,137 @@ after-the-fact check, since no guest connection was ever opened): QMP, GDB,
 and the serial console were never used. This entire update is source
 research only.
 
+## Widget-hosted Metal compositing: live test attempt (2026-07-31, new session)
+
+Direct continuation of "Widget-hosted Metal compositing design and prototype"
+above, picking up its own "Concrete next steps for whoever picks this up
+(live-testing required)" list. Guest was confirmed exclusively available
+(QEMU pid `2858187`, `info status` → `running`, `/sigkill_test` →
+`Segmentation fault: 11`, `/compute_test` → `result = 42`) — no other
+session using it concurrently, unlike every prior session in this thread.
+Downloaded the `widget-host-prototype` CI artifact from run `30607988494`
+fresh (`inferno_widget_host`, 71952 bytes, matches the run's own recorded
+job — no rebuild needed, artifact was still live).
+
+### Step 1 result (read-only): decisive, build-wide negative for the
+### prototype's core assumption — every widget in this build is WidgetKit,
+### none are legacy `NCWidgetProviding`
+
+Per the prior session's own step 1 ("resolve legacy `NCWidgetProviding` vs
+WidgetKit identity — decides whether this whole approach is even viable"),
+dumped `StocksWidget.appex/Info.plist` (976 bytes, `bplist00` magic —
+`plutil` is **not present on this guest** (`which`/`plutil` both "command
+not found"), so used this project's own established technique: `od -An -v
+-tx1` over the full file via the serial console, reassembled and parsed
+locally with Python's `plistlib`, which reads binary plists natively). One
+real gotcha hit doing this: a first parsing attempt of the reassembled hex
+silently corrupted the byte stream by including the *echoed command
+line itself* as data — the naive "any two-hex-char token" filter matched
+the literal substring `dd` inside the echoed `dd if=... | od ...` command
+line (`d` and `d` are both valid hex digits), prepending a spurious extra
+`0xdd` byte and shifting every subsequent offset by one (visible as a
+garbled magic number, `0xedfacfdd` instead of `0xfeedfacf`, a right-rotated
+version of the real bytes). Fixed by simply excluding the first (echoed
+command) line before token-scanning — worth recording as a reusable
+gotcha for this project's whole "reassemble hex dumped over the serial
+console" technique, since it would silently corrupt any future dump whose
+issuing command line happens to contain a two-hex-digit substring.
+
+**Full parsed `StocksWidget.appex/Info.plist`:**
+```
+NSExtension = {'NSExtensionPointIdentifier': 'com.apple.widgetkit-extension'}
+CFBundleExecutable = StocksWidget
+CFBundleIdentifier = com.apple.stocks.widget
+CFBundlePackageType = XPC!
+... (version/platform/build metadata, unremarkable)
+```
+**No `NSExtensionPrincipalClass` key at all** — confirming this isn't just
+"the wrong value," it's a structurally different plist shape than the
+prototype's design assumed. Legacy `NCWidgetProviding` extensions declare
+`NSExtensionPointIdentifier = com.apple.widget-extension` **and** a
+`NSExtensionPrincipalClass` string naming the hosted `UIViewController`
+subclass (exactly the key the prototype's step 2 was designed to edit).
+WidgetKit extensions apparently need neither.
+
+**This is not specific to `StocksWidget`.** Repeated the same check (this
+time via a faster `grep -a -o 'com\.apple\.widget[a-z-]*extension'` directly
+on the guest, no need to reassemble the full plist) against every other
+widget `.appex` actually running in this exact boot (`ps auxww | grep -i
+widget`): `WeatherWidget`, `PhotosReliveWidget` (note: lives at
+`/Applications/MobileSlideShow.app/...`, **not** under
+`/private/var/containers/Bundle/Application/<UUID>/`, unlike every other
+widget here — a real, system-app-tier bundle location, not a
+sandboxed-container one), `ScreenTimeWidgetExtension` (also
+`/Applications/...`), `GeneralMapsWidget`, plus two more not previously
+enumerated (`RemindersWidgetExtension`, `CalendarWidgetExtension`, found via
+a fresh `find ... -iname "*.appex"` sweep). **All seven, without a single
+exception, report `com.apple.widgetkit-extension`.** This build's
+Springboard-hosted Today View / widget gallery is 100% WidgetKit — Apple
+shipped every first-party widget already rewritten for the new framework
+from iOS 14.0 itself (matches real-world history: WidgetKit launched with
+iOS 14, and Apple's own bundled widgets adopted it immediately, unlike
+third-party apps which needed a new Xcode target type). **There is no
+legacy-widget fallback anywhere in this build** — the prior session's own
+fallback list (`WeatherWidget`/`PhotosReliveWidget`/`ScreenTimeWidgetExtension`)
+is exhausted; none of them are viable either, for the identical reason.
+
+### Step 1b (not in the original plan, but directly informative): inspected
+### the real `StocksWidget` binary's own Mach-O structure before deciding
+### whether to still attempt the swap
+
+Given the plist result, checked what a *real* WidgetKit extension binary
+actually looks like structurally, to judge whether the existing prototype
+(built `-Wl,-e,_NSExtensionMain`, no `main()`, plain ObjC/UIKit) has any
+realistic chance of being accepted even if forced into place. Same `dd
+bs=1 count=4096 | od -An -v -tx1` + local Python `struct`-based Mach-O
+header/load-command parse used throughout this project (not otool/ipsw).
+
+**The real `StocksWidget` binary has a genuine `LC_MAIN` with
+`entryoff=0x4a658`** — i.e. a real, normal, compiled `main()` entry point,
+**not** the `-e _NSExtensionMain`-style dyld-stub-symbol entry the
+prototype uses. Its `LC_LOAD_DYLIB` list: `TeaUI.framework`,
+`NewsFoundation.framework` (shared code with News.app, mildly interesting
+but a tangent), `Stocks/StocksCore.framework`, **`SwiftUI.framework`**,
+`TeaCharts.framework`, `TeaFoundation.framework`, **`WidgetKit.framework`**,
+`Foundation.framework`, `libobjc.A.dylib`, plus more past the 4096-byte
+capture window. The presence of a real compiled `main()` (almost certainly
+Swift's autogenerated top-level entry from a `@main`-attributed
+`WidgetBundle` conformer, consistent with linking `WidgetKit`+`SwiftUI`
+directly) rather than `NSExtensionMain()` **independently confirms, from
+the binary side, what the Info.plist already showed from the metadata
+side**: WidgetKit extensions in this build do not go through the classic
+`NSExtensionMain()` → `NSExtensionPrincipalClass` → `UIViewController`
+bootstrap at all. They have their own, different, Swift/WidgetKit-native
+bootstrap and registration path with the host, one this project has no
+visibility into internals-wise (same DSC-parser gap as everywhere else in
+this document — `WidgetKit.framework` itself is DSC-resident).
+
+**Assessment**: the existing `inferno_widget_host` prototype is built for
+an extension shape (`NSExtensionMain`-entry, ObjC `UIViewController`
+principal class, live-hosted `CALayer`) that **does not exist anywhere in
+this build**. This is a real, load-bearing architecture mismatch, not a
+detail to patch around — the prototype would need a fundamentally
+different entry point (a real `main()`, most realistically obtained the
+same way this project's other plain-executable test binaries already are,
+i.e. compiled with a normal `int main()` instead of the `-e
+_NSExtensionMain` linker override) and a different registration story with
+whatever WidgetKit's own host process expects, which is unknown without
+DSC introspection of `WidgetKit.framework` itself.
+
+### Live test performed anyway, expectations set honestly up front
+
+Per this task's own instruction ("a well-documented failure with a clear
+next step is a completely acceptable outcome — don't force a false-positive
+conclusion") and this project's standing M.O. of preferring a real,
+observed result over a purely theoretical one, the swap was attempted live
+on `StocksWidget` regardless of the architecture mismatch just established
+— the artifact was already downloaded, the transfer/respring mechanics are
+cheap to exercise either way, and *how exactly* a mismatched extension
+shape fails (silent non-launch? launch-then-immediate-death? a new,
+unpatched SIGKILL-style gate? the same pre-`main()` dyld crash signature
+documented elsewhere in this file?) is itself real, useful information for
+whoever designs the next iteration.
+
 ## CRITICAL: the SIGKILL mystery and its workaround
 
 **Every freshly-transferred, unsigned MAIN EXECUTABLE binary on the guest
