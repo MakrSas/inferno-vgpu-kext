@@ -1,5 +1,11 @@
 Continue the Inferno GPU/Metal project. Repo: `/home/makr/Documents/inferno-vgpu-kext` (GitHub `MakrSas/inferno-vgpu-kext`). QEMU working dir: `/home/makr/Documents/Inferno/InfernoData`.
 
+**CRITICAL, READ BEFORE DOING ANYTHING ELSE — the guest disk image is NOT present on local disk right now.** After the day's work described below finished, the host was critically low on disk space, so `InfernoData/root` (the guest's actual root filesystem — 32GB logical/~8GB real, the disk `launch_shell.sh` boots from via `-drive file=root,format=raw`) was compressed and moved to a USB flash drive to free local space, **and the local copy was deleted**. Attempting to run `launch_shell.sh` right now will fail (missing `root` file). Before doing anything guest-related:
+1. Confirm the flash drive is mounted (`ls /media/*/INFERNO` or wherever it currently is — ask the user if it's not obviously mounted, don't guess a device path).
+2. Restore: `zstd -d /media/makr/INFERNO/root-current-2026-08-01.zst -o /home/makr/Documents/Inferno/InfernoData/root` (this is the *current, up-to-date* backup — matches the guest disk exactly as it was at the end of the session described below, including the widget-swap-related state). Verify with `ls -la` that the result is exactly 34359738368 bytes before booting.
+3. There's also `root.pristine-backup.zst` on the same flash drive — that one is the *original, pre-any-project-changes* state, not what you want for continuing this work; don't confuse the two.
+4. Once restored, everything else (`kernelcache.vgpu2.patched`, `dyld_shared_cache_arm64e`, the `Inferno` QEMU build, etc.) is still present locally and untouched — only `root` itself needed to move.
+
 **Read `/home/makr/Documents/inferno-vgpu-kext/PROJECT_STATUS.md` in full first — it is the single source of truth.** It's very long (~4400+ lines) but has every finding, every playbook, every gotcha. This file was written at the end of a very long, high-progress day — the host machine was being shut down for the day right after this, so treat everything below as accurate as of that moment, but the guest VM itself will need a fresh boot next session (the machine was fully powered off, not just the VM).
 
 **What changed today, roughly in the order it happened (skim `PROJECT_STATUS.md`'s dated sections for full detail on any of these):**
