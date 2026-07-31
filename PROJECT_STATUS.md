@@ -4484,3 +4484,57 @@ gathered so far — worth doing before investing in a real disassembler.
 **Environment re-verified clean after this update**: `/sigkill_test` →
 `Segmentation fault: 11`, `/compute_test` → `result = 42`, QMP `info status`
 → `running`, both breakpoint sets fully removed, no dangling paused state.
+
+### UPDATE, same session: the true-fresh-boot-from-t0 retest was done —
+### clean, strong negative. `CARenderer`'s Metal backend is most likely
+### genuinely unused in this build. Deprioritizing this thread.
+
+Did exactly the "concrete next step" from the update above: killed and
+relaunched QEMU, armed `gdbserver tcp::1234` + all three corrected (real,
+de-stubbed) addresses within seconds of the new process starting — before
+the kernel meaningfully begins executing — and watched continuously for
+400s wall-clock. **Zero hits**, and this time with strong, direct evidence
+the window genuinely covered the relevant boot range: `ps` afterward showed
+`backboardd` (pid 60) and `SpringBoard` (pid 57) both freshly started
+(8:36AM guest time) and the guest's own `uptime` reporting `up 0:03` (180
+real guest-seconds of boot progress covered by the armed window, not
+dilation-starved down to a handful of seconds).
+
+**This is now a materially stronger negative than either prior attempt**:
+correct (non-stub) addresses, armed from literally the first schedulable
+instant, covering the *entire* startup of both `backboardd` and
+`SpringBoard` end to end, not just a slice of it. `shared_server_init`'s own
+address never fired even once across this whole range, on top of it never
+being reachable via any direct in-image `BL` (already established). Taken
+together with the original static finding (backboardd's own `TEXT` never
+references any Metal-callback/backend-selection symbol, only the passthrough
+`CARenderServerRenderDisplay`), the most likely explanation is now simply
+**this build's `CARenderServer` never takes the Metal-backed code path at
+all** — `kCARendererMetalCommandQueue`/`CARenderBackdropCollect`'s Metal
+option surface is real, compiled-in QuartzCore API, but this specific
+device class/OS build configuration apparently never exercises it, and the
+real, already-well-established software/`IOSurface`+`IOMobileFramebuffer`
+compositing path is genuinely the *only* one active here — not a partial or
+lazy adoption gap, a structurally different, unused path, same conclusion
+shape as the original backboardd investigation reached for the public
+`MTLCreateSystemDefaultDevice()` surface.
+
+**Deprioritizing this thread as a result** — not closing it out entirely
+(the indirect-call/`BLR` gap from the update above is still real and
+unresolved in principle), but three increasingly rigorous negative results
+in a row is a strong enough signal to stop investing further live-debugging
+time here without new evidence pointing back to it. The remaining
+"real interface via Metal" effort is better spent on the widget-hosting
+thread (`chronod`'s real XPC protocol, already identified via `dsc_parse.py`
+— see the WidgetKit extension-registration section) — notably, **that path
+does not depend on solving the still-open container-signature-cascade
+problem at all**: the cascade only breaks *opening the full `Stocks.app`*
+(a `Sandbox: hook..execve() killing <unsigned>` chain triggered by tapping
+to launch the app), which is a separate concern from whether the *widget
+slot itself* can render real content once it correctly answers `chronod`'s
+`getDescriptors`/`getTimeline` XPC calls — the on-screen widget rendering
+goal doesn't require the app to open at all.
+
+**Environment left clean**: same as above, re-verified after this window
+too (`/sigkill_test`/`/compute_test`/`info status` all clean, guest running
+on this fresh boot, no dangling GDB state).
