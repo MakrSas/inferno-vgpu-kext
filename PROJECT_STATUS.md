@@ -2848,6 +2848,383 @@ hook_vnode_check_open op 0x1f (file-write-data), force-allow capture
 register")` to that table and re-verify after a real restart, the same way
 the original 5 were made permanent.
 
+## Widget-hosted Metal compositing: `main()`-shape fix + live test, and the
+## container-signature-cascade gate (2026-07-31, new session)
+
+Direct follow-up to both open items the prior live-test session left behind:
+(1) the confirmed architecture mismatch (`inferno_widget_host.m`'s
+`-Wl,-e,_NSExtensionMain` shape vs. the real `StocksWidget` binary's genuine
+`LC_MAIN`), and (2) the "6th, previously-undiscovered security gate"
+(`hook_vnode_check_open` op `0x1f`, file-write-data) that session live-patched
+in memory to unblock the binary swap itself. Two explicit sub-tasks, in
+priority order: fix the entry-point shape (primary), then investigate the
+*separate* container-signature-cascade kill the prior session observed live
+via the user's own manual interactive testing (secondary). Both are covered
+below.
+
+### Part 1: `inferno_widget_host_main.m` — a real `main()`-shaped variant
+
+**New file, `src/userspace_test/inferno_widget_host_main.m`, added alongside
+the original `inferno_widget_host.m` (kept unmodified, same precedent as
+`agx_system_metal_test_direct.m` sitting next to `agx_system_metal_test.m`).**
+Deliberately as simple/dependency-light as possible so any failure is
+attributable to the file's own shape, not incidental complexity:
+- A real, plain `int main(void)` — no `-Wl,-e,_NSExtensionMain` override, no
+  `UIViewController`/`UIKit`/`QuartzCore`/`CoreGraphics` at all (there is no
+  PlugInKit-hosted view to draw into without the `NSExtensionMain` handshake
+  this file specifically does not attempt, so that machinery would add risk
+  for zero payoff).
+- Links only `Foundation` + `Metal`, mirroring this project's own
+  already-proven plain executables (`compute_test`/`draw_test`, i.e.
+  `agx_metal_api_compute_test.m`/`agx_metal_api_draw_test.m`).
+- Reuses the exact same `/b`-bridge render pipeline (`dlopen("/b")` → `Q()` →
+  device → texture → two `MTLLibrary`s → pipeline → per-frame
+  buffer/encoder/draw/commit/`getBytes`, same two AIR shaders byte-for-byte)
+  as `inferno_widget_host.m`, purely as an ongoing self-check that the
+  process is alive and doing real work for as long as it survives — not
+  because this variant expects any compositing to actually happen (there is
+  no hosted `CALayer` to reach in this design).
+- An infinite plain `sleep()`-paced loop (not `CFRunLoopRun()`/
+  `dispatch_main()`, which would pull in run-loop bootstrap machinery this
+  file has no need to depend on), so it can't itself be the reason the
+  process fails to stay alive.
+- `WTrace()` diagnostic helper, same shape as the original's `WTrace`, but
+  writing to a **different** path (`/tmp/widget_host_main_trace.log`, not
+  `.../widget_host_trace.log`) specifically so a live test of this variant
+  can never be confused with a stale log from an `inferno_widget_host.m` run.
+  Every line is pid-prefixed. The very first statement in `main()` writes a
+  trace line before anything else runs — mirroring
+  `agx_system_metal_test.m`'s `MTrace()`-as-first-statement pattern, so even
+  a total setup failure still proves whether execution reached user code at
+  all.
+
+**`.github/workflows/build.yml`**: added a second compile step to the
+existing `widget-host-prototype` job (the original `-e _NSExtensionMain` step
+kept as-is), building `inferno_widget_host_main.m` as a plain executable
+(`clang ... -framework Foundation -framework Metal -o
+out9/inferno_widget_host_main ...`, no `-e` override), then dumping
+`otool -hv`/`-l`/`-L` and `nm -m` for inspection, same "always show the raw
+evidence" convention as every other job in this file.
+
+**CI result (run `30630089751`): compiled and linked cleanly, decisive
+evidence the entry-point mismatch is genuinely fixed.**
+- `otool -hv`: `MH_MAGIC_64 ARM64 E USR00 EXECUTE 22 2176 NOUNDEFS DYLDLINK
+  TWOLEVEL PIE` — real `EXECUTE` filetype, `NOUNDEFS` confirms every symbol
+  reference (including the entry point) fully resolved.
+- `otool -l`: a genuine `LC_MAIN`, `entryoff 16384 stacksize 0` — **not** an
+  `-e`-override entry, immediately followed by ordinary `LC_ENCRYPTION_INFO_64`
+  then `LC_LOAD_DYLIB` commands for exactly `Foundation`, `Metal`,
+  `libobjc.A.dylib`, `libSystem.B.dylib`, `CoreFoundation` — **no**
+  `WidgetKit`/`SwiftUI`/`UIKit`, matching the design intent precisely.
+- `nm -m`: `_main` present as `(__TEXT,__text) external _main` — a real,
+  defined symbol, not an undefined stub reference. Grepping the symbol table
+  for `extensionmain` (case-insensitive) finds **nothing at all** — confirmed
+  by inspecting the full table directly, not just trusting the grep (the CI
+  script's own convenience grep for `\bmain\b|extensionmain` also came back
+  empty, which turned out to be a regex-boundary false negative — `\b` does
+  not match between `_` and `m` since both are word characters in POSIX ERE
+  — not a real absence; the full `nm` output settles it unambiguously).
+  `SetUpDevice`/`RenderOneFrame`/`WTrace`/`gDevice` etc. all present as
+  expected `__TEXT`/`__DATA,__bss` symbols.
+
+This fully answers open question #3 from the design session and the
+mismatch identified in the prior live-test session: the binary's Mach-O
+shape now structurally matches the real `StocksWidget` executable's own
+(real `LC_MAIN`, no extension-stub entry), and is otherwise link-clean.
+
+### Part 1 live test: swap, respring, unlock, navigate — a real, decisive,
+### negative-but-highly-informative result
+
+**Transfer gotcha, worth recording as a reusable lesson**: the first attempt
+to transfer `inferno_widget_host_main` (69304 bytes) to the guest via
+`transfer_binary3.py` was corrupted mid-flight — a **second, concurrent**
+serial-console connection (opened by the orchestrating session to check
+status while the transfer was still in progress) collided with it, leaving
+the guest shell stuck at an open continuation prompt (recovered cleanly via
+the already-documented `Ctrl-C` twice) and the transferred file **silently
+truncated** at exactly 69000 of 69304 bytes (confirmed via `wc -c`, not just
+assumed) with its trailing `chmod 755` never having run. This is the exact
+same underlying hazard this doc's "never open a second serial connection
+while a transfer is in flight" rule already warns about, now with a second,
+independent concrete reproduction (the first being the ~1650-character
+long-command corruption case). Fix was mechanical: `rm -f` the truncated
+file, retransfer cleanly with no concurrent connection this time — the retry
+landed at exactly 69304 bytes, executable, verified byte-count-exact before
+proceeding. **Lesson for future sessions**: a byte-count check
+(`wc -c < remote_path`) against the known local size should be treated as
+mandatory before trusting *any* serial-console transfer that had *any*
+external interaction during its window, not just an optional nicety.
+
+**The swap itself**: `dd if=/inferno_widget_host_main of=<StocksWidget.appex
+path>/StocksWidget` (no `conv=notrunc`, correctly truncating the container
+copy from the previous session's 71952-byte `NSExtensionMain`-shaped
+prototype down to this variant's 69304 bytes) — `135+1 records
+in/out`, confirmed via a follow-up `wc -c` reading back exactly `69304`.
+Gate #6 (file-write-data, still live-patched in memory only from the prior
+session — QEMU has not restarted since) worked exactly as documented: the
+write succeeded (`DD_RC=0`) despite `dmesg` still logging a `System Policy:
+dd(...) deny(1) file-write-data ...` line for it (the already-understood
+"shared bytecode evaluator logs its own would-have-denied verdict
+independent of what the calling hook does with it" behavior).
+
+**Triggering a real launch attempt required three real steps, not just a
+respring** (a respring alone reloads SpringBoard's own process but does
+**not** by itself cause Today-View widgets to instantiate — confirmed
+directly: immediately after `kill -9 <SpringBoard pid>` and the fresh
+SpringBoard respawning, `ps auxww | grep -i stocks` showed nothing, and the
+screen was confirmed via QMP `screendump` to still be sitting on the lock
+screen):
+1. **Unlock**: `qmp_raw.py`'s `swipe()`, a real held multi-step drag from
+   near the bottom of the screen to near the top (`(414,1780)→(414,100)`,
+   40 steps, `0.04s` per step, `0.3s` settle). A first, shorter attempt
+   (`(414,1750)→(414,300)`, 25 steps) visibly began the transition (the
+   "Смахните вверх, чтобы открыть" prompt text visibly faded) but did not
+   complete it — confirming this doc's existing "known finicky, not
+   impossible" note about this gesture. The longer/slower second attempt
+   unlocked cleanly to the home screen on the first try.
+2. **Reach Today View**: a stray "iOS update available" alert
+   (`Доступно обновление iOS...`) appeared after the first rightward swipe
+   attempt (from a genuine, unrelated system nag dialog, not anything this
+   session triggered) and had to be dismissed (tap on `Закрыть`) before a
+   second rightward swipe actually landed on the Today View page (swipe
+   right across the leftmost home-screen page — the paging model in this
+   build is: numbered app pages, then Today View one swipe further left,
+   confirmed by the page-dot indicator disappearing and being replaced by
+   Today View's actual widget-stack content once reached).
+3. **Screendump-confirm, don't assume**: every step above was verified with
+   a QMP `screendump`, not inferred from gesture completion alone — this
+   directly avoided two real near-misses (the too-short swipe leaving the
+   lock screen still up; the update-alert silently blocking the swipe from
+   reaching Today View at all) that would have produced a false "widget
+   never launches" conclusion for the wrong reason.
+
+**Result, once Today View was genuinely confirmed reached**:
+`StocksWidget` **still never launches** — the exact same failure mode
+already documented for the previous (`NSExtensionMain`-shaped) swap,
+confirming the entry-point-shape fix, while real and necessary, is **not
+sufficient** on its own. Three independent, converging pieces of evidence:
+1. `ps auxww | grep -i widget` around and after the Today View visit shows
+   `WeatherWidget`, `GeneralMapsWidget`, and `PhotosReliveWidget` **all**
+   freshly relaunched (new pids, timestamps matching the respring window) —
+   proving the general "Today View becoming active triggers on-demand widget
+   instantiation" mechanism is genuinely working and was genuinely exercised
+   — but `StocksWidget` is conspicuously, consistently absent from every
+   check.
+2. `/tmp/widget_host_main_trace.log` **never gets created** — `cat` returns
+   "No such file or directory". Since `WTrace()`'s very first call is the
+   literal first statement in `main()`, this proves execution never reached
+   even the first line of this project's own code — the process is being
+   killed at/before `execve()` completion, structurally identical to the
+   original 5 (now 6) SIGKILL-gate kills, not a userspace crash.
+3. `dmesg`, timed exactly against the Today View window (correlated via the
+   simultaneous `memorystatus: set assertion priority(3) target
+   WeatherWidget:4243` / `GeneralMapsWidget:4229` / `PhotosReliveWidget:4334`
+   lines — RunningBoard assertions for those widgets' own legitimate,
+   successful timeline-refresh cycles), shows repeated bursts of the exact
+   same message the prior session already found and flagged as a new,
+   undocumented-until-then gate:
+   ```
+   Sandbox: hook..execve() killing <unsigned>[pid=4330, uid=501]: attempting to use a container without a code signing identity.
+   Sandbox: hook..execve() killing <unsigned>[pid=4331, uid=501]: attempting to use a container without a code signing identity.
+   Sandbox: hook..execve() killing <unsigned>[pid=4333, uid=501]: attempting to use a container without a code signing identity.
+   ```
+   (and a second burst, pids 4338/4339/4340, ~17s later) — i.e. **the same
+   container-signature-cascade gate that killed sibling XPC helpers when the
+   prior session's `NSExtensionMain`-shaped binary was in place also kills
+   this session's correctly-`main()`-shaped replacement**, before its own
+   code ever runs. This is a genuinely useful negative result: it cleanly
+   separates the two problems Part 1 and Part 2 were scoped around — the
+   entry-point mismatch is fixed and no longer the blocker; the *actual*
+   current blocker is the bundle-wide signature-validity cascade, which is
+   completely indifferent to what shape the replacement binary itself takes.
+
+**A concrete, unplanned bonus finding**: tapping the Today View's placeholder
+tile for the (non-functional) Stocks widget — a plain gray box reading "Нет
+доступного контента" ("No content available"), the same generic WidgetKit
+placeholder chrome separately observed for Photos earlier this session per
+the orchestrating session's own account — **expands into a fully-formed,
+structurally correct Stocks widget-stack detail view**: a stock-chart icon,
+a large chart pane with a proper axis/gridline/legend layout, and two
+watchlist-style list sections — all populated with `--` placeholder values
+instead of real data (unsurprising, since this offline QEMU guest has no
+real stocks backend for even the *genuine* Stocks app to reach). Since our
+replacement process never runs at all (confirmed above), **this chrome is
+being generated entirely host-side by WidgetKit itself**, not by anything
+our binary produced. This lines up exactly with the `getPlaceholders`
+operation the concurrent DSC-parser session found in
+`WidgetKit.ExtensionSessionOperation`'s case list (see that session's own
+section below) — concrete, live, visual confirmation that real WidgetKit
+hosts fall back to their own generic placeholder rendering when the actual
+extension can't be reached, rather than showing an error or blank tile.
+This also answers, empirically, one of Part 1's own original questions
+("does WidgetKit's host process itself report/log anything more
+informative once the immediate mismatch is gone?") — the answer is: it
+doesn't need to log anything extra to be informative; its own placeholder
+behavior *is* the informative signal, and it's a clean, non-crashing,
+non-alarming fallback, not any kind of error state.
+
+**Net assessment for Part 1**: the task's own stated success bar ("a
+well-documented 'it still doesn't fully work, but here's exactly how it
+fails now, and here's what that tells us' is a completely valid, valuable
+outcome") is met with a genuinely decisive result, not a shrug. The specific
+mismatch Part 1 was scoped to fix (`NSExtensionMain`-stub entry vs. real
+`main()`) **is fixed and CI/structurally verified**; the live test now
+isolates the *next* real blocker precisely (the container-signature cascade,
+Part 2's target) instead of leaving both problems conflated. Even if Part 2
+is later resolved, the concurrent DSC-parser session's WidgetKit findings
+(see its section below) mean a further, separate piece of real engineering
+— an `NSXPCListener` implementing `ExtensionToHostXPCInterface` and
+answering at minimum `getDescriptors`/`getTimeline` over a
+`com.apple.chronod`-reachable channel, plus whatever `RunningBoard`
+assertion dance `ExtensionSessionFactory.makeSession` expects — would still
+be needed before this project's replacement binary could ever show *live,
+Metal-rendered* content in that Stocks tile instead of the generic
+placeholder. That is real, substantial, correctly out-of-scope-for-this-
+session work; the concrete addresses to start from
+(`WidgetBundle.main()` @ `0x1c100957c`, `ExtensionSessionFactory.makeSession`
+@ `0x1c101573c`, both already located via `dsc_parse.py`) are recorded in
+that session's own "Concrete next steps" list, not repeated here.
+
+### Part 2: the container-signature-cascade gate — investigated, not yet
+### live-patched; concrete groundwork laid for both candidate fixes
+
+Per the task's own explicit choice between (a) ad-hoc-resigning the
+replacement binary (+ patching the bundle's `_CodeSignature/CodeResources`)
+and (b) a kernel patch via this project's established disassemble-first
+methodology — **both were investigated this session; neither was completed
+live**, given the time already spent recovering from the transfer-corruption
+gotcha above and completing Part 1's live test properly (per the
+orchestrating session's own repeated, correct emphasis on reaching a real
+observed outcome for Part 1 first). What follows is real, verified
+groundwork for whichever direction a future session picks up.
+
+**Direction (a): `ldid` is now a genuinely available, working tool on this
+Linux host — a decisive, positive answer to a previously-open question.**
+Not present via `apt`/`snap` directly (`apt-cache search ldid` and
+`snap find ldid` both come up empty), but buildable from source with zero
+`sudo`/root access needed at any step:
+- `git clone https://github.com/ProcursusTeam/ldid.git` (the actively
+  maintained fork; plain `make` needs only `libcrypto`/`libplist-2.0` via
+  `pkg-config`).
+- `libssl-dev` (for `libcrypto`) was **already installed** on this host.
+  `libplist-2.0` was only present as a runtime lib
+  (`libplist-2.0-4`), not the `-dev` headers/`.pc` file — fixed with
+  `apt-get download libplist-dev` (downloads the `.deb` without installing
+  or needing root — Ubuntu's `apt-get download` doesn't require privilege
+  escalation) then `dpkg -x <deb> <local dir>` to extract just the headers
+  locally, with a hand-created `.so` symlink pointing at the
+  already-installed runtime `.so.4` (the extracted `-dev` package's own
+  symlink target was itself missing since only the runtime package, not the
+  `-dev` package, was ever actually installed system-wide) so the linker
+  could resolve `-lplist-2.0` against it.
+- Result: `ldid` builds cleanly (`g++ -std=c++11 ...`), runs, and was
+  **verified functionally correct** against a real arm64e Mach-O (this
+  session's own CI-built `inferno_widget_host_main`): `ldid -S
+  test_sign_target` embeds a real `CodeDirectory` (`v=20400`, `hashes=17+2`,
+  `Hash type=sha256`) with a real `CandidateCDHash`; `ldid -Icom.apple.stocks.widget
+  -S` correctly sets a custom identifier matching the real bundle ID. This
+  concretely resolves the "is `ldid` obtainable" question this task raised —
+  it is, and it works.
+- **Not completed this session**: actually pulling the real
+  `_CodeSignature/CodeResources` off the guest (would need the same
+  chunked-transfer-in-reverse technique this project already uses for
+  binary-plist reads, `od`-dumped over the serial console and reassembled
+  locally — the file's exact size wasn't checked this session, so its cost
+  is unknown but plausibly cheap, being just a hash manifest, not a full
+  binary), understanding/patching its per-file SHA1/SHA256 hash entry for
+  `StocksWidget` to match the ad-hoc-re-signed replacement, and writing the
+  modified plist back (gate #6 covers this, being a file-write-data
+  operation against an existing file). **This is the recommended next step
+  for whoever picks up direction (a)** — the tooling gap that made this
+  direction previously "not obviously feasible" is now fully closed; only
+  the mechanical CodeResources-editing work remains, and it's a clean fix
+  (no kernel modification) if it works.
+
+**Direction (b): the responsible kernel string/function is now precisely
+located, though the exact guarding conditional branch was not fully pinned
+down.** Same disassemble-first methodology as every other gate in this doc,
+done entirely offline against the local `kernelcache.decompressed`, no live
+guest interaction needed for the analysis itself:
+- The literal message string `"attempting to use a container without a code
+  signing identity."` occurs **exactly once** in the kernelcache — file
+  offset `0x559ef6`, VA `0xfffffff00755def6` (inside `__TEXT __cstring`,
+  confirmed via the same `va2off`/segment-table walk `patch_kernelcache.py`
+  already uses). Immediately followed in memory by
+  `"failed to upcall to containe[rmanagerd]"` (truncated by the read
+  window), a plausible sibling error string for a related failure mode, not
+  otherwise investigated this session.
+- Wrote a small, targeted ADRP+ADD scanner (not a general disassembler) over
+  the `__TEXT_EXEC __text` section (0x1def9c0 bytes, ~7.85M instructions,
+  fully scanned in under 3 seconds in pure Python via bulk
+  `struct.unpack_from`) looking for an `ADRP xN, page` immediately followed
+  by an `ADD xN, xN, #imm12` whose combined result equals the target VA
+  exactly (not just "targets the right 4KB page", which alone produced 92
+  same-page false-positive candidates — most of that page holds several
+  *other* nearby error strings referenced from the same function region).
+  Found exactly one genuine, immediately-adjacent pair: **`ADRP x8, page` at
+  VA `0xfffffff0092b1350` (encoding `90ff1568`) + `ADD x8, x8, #0xef6` at VA
+  `0xfffffff0092b1354` (encoding `913bd908`)**, followed by an unconditional
+  `B` to a shared epilogue at `0xfffffff0092b1368` that `STR`s the computed
+  message pointer before falling into whatever common log/kill logic all of
+  this function's many error paths share.
+- **This message-construction site sits inside the exact same large function
+  region as the already-patched, already-permanent gate #3
+  (`0xfffffff0092b0f00`) and gate #4 (`0xfffffff0092b126c`)** — i.e. very
+  likely still `hook_cred_label_update_execve` in `Sandbox.kext`, the same
+  function this project has already twice successfully patched individual
+  branches inside of. This is a strong, concrete, structurally-consistent
+  lead: the container-signature-cascade kill is not some unrelated new
+  subsystem, it is (almost certainly) one more internal error path inside a
+  function this project already has two proven, permanent surgical patches
+  in.
+- **What was NOT completed**: pinning down the *specific* conditional branch
+  that funnels execution into this exact message block (as opposed to any
+  of the several sibling blocks visible in the same disassembly window, each
+  an identical 16-byte `MOVZ w0,#0 / ADRP / ADD / B`-shaped case for a
+  *different* message — this function evidently compiles a long chain of
+  distinct failure conditions, not a single simple bounds-checked jump
+  table, since the individual case blocks are reached via scattered
+  `CBZ`/`CBNZ`/`TBZ`/`B.cond` instructions earlier in the function rather
+  than one computed indirect branch). Isolating the *exact* guarding branch
+  with confidence — as opposed to guessing and risking an over-broad patch
+  like gate #1's own documented caveat — would benefit from the same
+  two-phase live-breakpoint technique used throughout this project (arm a
+  breakpoint at `0xfffffff0092b134c`, the block's own entry, alongside the
+  handful of sibling case-block entries at the same 16-byte stride
+  immediately before it, then correlate which one actually fires against a
+  real triggered kill) rather than more static guessing — a live,
+  bounded-scope task well suited to a future session with fresh time budget,
+  not attempted here given how much of this session's budget had already
+  gone into Part 1's live test and its transfer-corruption recovery.
+
+**Reasoning for not completing either direction live this session**: both
+are now substantially de-risked (tooling proven for (a); exact
+string/function region pinned for (b)) but both still need real additional
+work (CodeResources format handling for (a); live breakpoint correlation for
+(b)) that would have meaningfully extended an already-long session already
+carrying real risk (the transfer corruption, the multi-step
+unlock-and-navigate sequence) — consistent with this project's own standing
+preference for a well-documented, honestly-scoped stopping point over a
+rushed, unverified patch attempt on the live guest.
+
+### Cleanup and final state
+
+`StocksWidget` was restored to the real original binary via `dd
+if=/StocksWidget.orig of=<real path>` (**no** `conv=notrunc`, correctly
+truncating back down from this session's 69304-byte replacement to the
+original's exact `451200` bytes) — verified via a follow-up `wc -c` reading
+back exactly `451200`. Final sanity checks, all passing: QMP `info status` →
+`running`; `/sigkill_test` → `Segmentation fault: 11` (gates #1-#4 patches
+intact); `/compute_test` → `IOServiceOpen succeeded... result = 42 (expect
+42)`. Gate #6 remains live-patched in memory only (unchanged from the prior
+session — see that section's own note; a `SIGKILL_GATE_PATCHES` table entry
+for it was added to `patch_kernelcache.py` this session as prepared-but-
+dormant groundwork, deliberately not executed/baked — see that commit's own
+message for the reasoning: avoiding a kernelcache rebuild against an
+unrelated, uncommitted local `resolve.py`/`parse_obj.py` diff already
+sitting in this working tree from an unknown earlier session, rather than
+risk the live guest on an unvetted rebuild mid-task).
+
 ## CRITICAL: the SIGKILL mystery and its workaround
 
 **Every freshly-transferred, unsigned MAIN EXECUTABLE binary on the guest
