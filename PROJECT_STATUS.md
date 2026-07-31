@@ -3633,3 +3633,265 @@ still gets killed.
   a tighter trigger-to-fault-PC correlation — this is what actually caught
   the single, isolated `mapkit_snapshotter_test` crash PC documented in
   that same section.
+
+## From-scratch `dyld_shared_cache` parser (`dsc_parse.py`) — the "no ipsw"
+## gap is finally closed (2026-07-31, new session)
+
+This doc has referenced "no `ipsw`/DSC-parser tooling on this Linux host"
+as a blocking gap in at least a dozen separate places across totally
+different investigations (dyld's own lazy-binding internals, QuartzCore's
+private Metal-vs-software backend selection, MapKit's private snapshot
+backend, WidgetKit's registration protocol, the pre-`main()` dyld crash).
+**That gap is now closed.** `dsc_parse.py` (repo root) is a hand-decoded
+Python parser, same `struct.unpack_from` approach as `parse_obj.py`/
+`resolve.py` — no `ipsw`, no `macholib`, no external dependency at all.
+
+**Format reference used**: `apple-oss-distributions/dyld` tag
+`dyld-832.7.1` — the same tag this project's own dyld-crash-investigation
+section (above) already pinned as timestamp-matched to this project's xnu
+build (`xnu-7195.50.7.100.1`, both tag objects minted 90 seconds apart by
+the same automated Apple OSS bot). Specifically:
+- `dyld3/shared-cache/dyld_cache_format.h` — `dyld_cache_header`,
+  `dyld_cache_mapping_info`, `dyld_cache_image_info`,
+  `dyld_cache_image_text_info`, `dyld_cache_local_symbols_info`/`_entry`.
+- `dyld3/MachOLoaded.cpp` (`getExportsTrie`) — how a per-image
+  `LC_DYLD_INFO[_ONLY]`/`LC_DYLD_EXPORTS_TRIE` load command's `export_off`/
+  `dataoff` combines with that image's own `__LINKEDIT` segment to locate
+  its export trie's real bytes.
+- `dyld3/shared-cache/Trie.hpp` (`processExportNode`) — the export trie's
+  on-disk node format (ULEB128 terminal size/flags/address, then a
+  child-count byte and `(cstring edge, ULEB128 child-offset)` pairs) —
+  identical to the export trie format used in any standalone Mach-O's
+  `LC_DYLD_INFO`, no DSC-specific differences.
+
+A full local shallow clone of that tag was already sitting in this
+session's own scratchpad (`scratchpad/dyld_full/`) from the prior
+dyld-crash-investigation session sharing this same scratchpad — reused
+directly rather than re-fetched.
+
+**One real implementation wrinkle worth recording**: `MachOLoaded::
+getExportsTrie`'s live-pointer arithmetic (`this + (linkeditVMAddr -
+textVMAddr) + offsetInLinkEdit`) implicitly assumes the whole cache is one
+flat mapping where a VM-address delta always equals the same file-offset
+delta. **That assumption does NOT hold for this cache** — `dsc_parse.py`
+checks it explicitly (`DSC.flat`) and it comes back `False`: this cache's 4
+mappings (`__TEXT`/`__DATA*`/`__LINKEDIT`, r-x/rw-/r--) are laid out
+back-to-back with zero gaps in the **file**, but have real, non-contiguous
+gaps between them in **VM address space** (e.g. a 32MB gap between the end
+of the TEXT mapping and the start of the DATA mapping). `dsc_parse.py`
+therefore does real per-mapping `vmaddr → fileOffset` translation
+(`DSC.vm_to_file`, a linear scan of the 4 mappings) rather than the
+single-formula shortcut — the general, always-correct form, not a
+DSC-specific hack.
+
+### Validation against this project's own independently-known ground truth
+
+Two separate, previously-recorded VAs (both from this project's own prior
+live-GDB work, not from this session) were used as blind validation
+targets:
+
+```
+$ python3 dsc_parse.py sym2addr _MTLCreateSystemDefaultDevice Metal.framework/Metal
+_MTLCreateSystemDefaultDevice = 0x1970505d0  flags=0x0  image=/System/Library/Frameworks/Metal.framework/Metal
+
+$ python3 dsc_parse.py addr2sym 0x1970506e4
+0x1970506e4 = ___MTLCreateSystemDefaultDevice_block_invoke + 0x0   (sym@0x1970506e4)  image=/System/Library/Frameworks/Metal.framework/Metal
+```
+
+Both are **exact matches** to the addresses already on record earlier in
+this doc (the system-wide-patch section's `0x1970505d0`, and the
+`agx_system_metal_test` crash-investigation section's `0x1970506e4`
+block_invoke breakpoint address). The second one is notable beyond being a
+correct match: `___...block_invoke` is a local (non-exported) symbol —
+it's not in Metal's export trie at all, and only got resolved because
+`dsc_parse.py` also parses the cache-wide `dyld_cache_local_symbols_info`
+nlist table (per-image `nlistStartIndex`/`nlistCount` keyed by the image's
+file offset) and folds it into `addr2sym`'s nearest-symbol search — i.e.
+both major code paths (export-trie symbol lookup, and cache-wide local
+`nlist` reverse lookup) got real, independent validation in the same pass.
+
+### Where the DSC file itself came from (important: not re-derived this
+### session, and the live guest was never touched)
+
+`InfernoData/dyld_shared_cache_arm64e` (2,052,489,216 bytes, magic
+`dyld_v1  arm64e`) **was already present on this host**, dated 2026-07-29
+17:07 — from an earlier session's own transfer (`InfernoData/dyld_scp.log`
+records `dyld_cache.zst : 2052489216 bytes`; a sibling `scp-bashed.log`/
+`scp-strap.log` pair from the same day show an (also earlier, separate,
+much larger — 32GB) attempt at pulling the guest's entire `root` disk
+image the same way). **This session did not re-derive it, did not touch
+the live guest's serial console (4444), QMP socket, or GDB port (1234) at
+all**, and did not touch `InfernoData/root` (the guest's live raw APFS
+disk image) either — everything above came from reading the
+already-on-disk DSC file directly, plus real Apple source fetched from
+GitHub. `InfernoData/dyld_shared_cache_arm64e.a2s` (434MB, also already
+present) was **not used** — confirmed still what the earlier note in this
+doc said it was (`ipsw`'s own undocumented address-to-symbol cache
+format), genuinely irrelevant now that a real parser exists independent of
+it.
+
+**For whoever needs a *different* guest file next** (the dyld-crash
+section's own next-step #3 specifically wants `/usr/lib/dyld` itself,
+which is NOT inside the DSC on this platform): this host turns out to
+already have real, offline APFS read tooling installed —
+`libfsapfs-utils` (`fsapfsmount`, a FUSE-based read-only mounter, and
+`fsapfsinfo`), both in `/usr/bin`, no sudo needed to run (FUSE mounts as a
+regular user). There's also an `apfs-dkms` package installed but its
+`dpkg` status is `half-configured` (its kernel module likely never
+finished building/loading) — irrelevant since the userspace FUSE tool
+doesn't need it. **Not exercised this session** (no need — the file this
+session needed was already sitting on the host) and, per this task's own
+explicit safety instruction, **not tested against the live `InfernoData/
+root` file either**, even read-only, to avoid any risk to the concurrent
+session's use of that same file. If a future session needs it: copy
+`InfernoData/root` first (local disk I/O, not guest-console-bound, so a
+32GB copy is practical), then `fsapfsmount`/`fsapfsinfo` the *copy*, never
+the live file.
+
+### Backlog question answered: WidgetKit's real extension-registration
+### protocol (directly useful to the concurrent widget-hosting session)
+
+The widget-hosting investigation earlier in this doc got as far as: real
+WidgetKit extensions have a genuine compiled `main()` (not
+`-e _NSExtensionMain`), consistent with Swift's `@main`-attributed
+`WidgetBundle` conformer, and concluded it has "a different registration
+story with whatever WidgetKit's own host process expects, which is
+unknown without DSC introspection of `WidgetKit.framework` itself." That
+introspection is now done. `WidgetKit.framework` is at cache address
+`0x1c0fbf000` (`/System/Library/Frameworks/WidgetKit.framework/WidgetKit`)
+with 1050 exported symbols and 1196 local (non-exported) symbols, both
+fully enumerable now via `dsc_parse.py dump-exports`/internal
+`_local_symbols_for_image`. Findings, all address/string-backed:
+
+- **The real entry point Swift's `@main` generates a call to**:
+  `WidgetBundle.main()` — exported as
+  `_$s7SwiftUI12WidgetBundleP0C3KitE4mainyyFZ` @ `0x1c100957c`. This is
+  what a widget extension's autogenerated top-level `main()` actually
+  calls (a `SwiftUI.WidgetConfiguration`-family static/extension method
+  supplied by WidgetKit itself) — confirms structurally, from the
+  framework side, what the binary-side Mach-O inspection already implied.
+- **The real daemon behind WidgetKit is called `chronod`**, part of a
+  private `ChronoServices.framework`
+  (`/System/Library/PrivateFrameworks/ChronoServices.framework/
+  ChronoServices`, referenced directly from WidgetKit's own `__TEXT`), with
+  mach service name **`com.apple.chronod`** — all found as plain ASCII
+  strings in WidgetKit's `__TEXT` (e.g. `0x41044df0`). WidgetKit's own
+  internal version string, also found in `__TEXT` @ `0x4103b530`:
+  `@(#)PROGRAM:WidgetKit  PROJECT:Chrono-97.1` — confirms "Chrono" is
+  Apple's actual internal project name for the whole WidgetKit
+  subsystem, not a guess. This project had never previously identified
+  `chronod`/`ChronoServices` anywhere in this doc.
+- **Two distinct, separately-named XPC connections**, both plain ASCII
+  strings in `__TEXT`: `com.apple.chrono.widgetcenterconnection` (
+  @`0x41043cf0`, matches the exported `WidgetCenter.serviceName`/
+  `WidgetCenter.configuredHostXPCInterface` static getters @ `0x1c0ff8acc`/
+  `0x1c0ff8ae8` — this is the app-facing side apps use via
+  `WidgetCenter.shared.reloadAllTimelines()` etc.) and
+  `com.apple.chrono.avocadocontrollerconnection` (@`0x41044600` — purpose
+  not fully identified this session; "Avocado" reads like a second
+  internal codename, plausibly the widget gallery/configuration-picker
+  surface, but this is a guess, not confirmed).
+- **The actual host↔extension XPC contract is a matched protocol pair**:
+  `HostToExtensionXPCInterface` / `ExtensionToHostXPCInterface` (both
+  `WidgetKit`-namespaced Swift protocols, symbol strings present both
+  old-style-mangled and new-style-mangled in `__TEXT`, e.g.
+  `$s9WidgetKit27HostToExtensionXPCInterfaceP` @ `0x41048054`), set up via
+  `NSXPCInterface`/`NSXPCConnection` (`WidgetKit/XPCInterfaces.swift` is
+  literally named in a nearby string). An adjacent error string pins the
+  failure mode this project would actually observe if a spoofed/incomplete
+  session tried to skip this: `"[%{public}s-%{public}s] Unable to create
+  new WidgetExtensionSession: xpc connection was nil."` (@`0x41045030`).
+- **The actual operation vocabulary of that XPC contract** is visible
+  directly as the case list of an exported Swift enum,
+  `WidgetKit.ExtensionSessionOperation` (`O` suffix = Swift enum type),
+  whose case-witness symbols spell out the operation names verbatim:
+  `getDescriptors`, `getTimeline`, `getPlaceholders`,
+  `attachPreviewAgent`, `handleURLSessionEvents` — i.e. this is the exact
+  set of requests a host (`chronod`, presumably, or whatever ends up
+  brokering it) can make of a running widget extension process: ask what
+  widget kinds it declares, ask for its actual `TimelineProvider` output,
+  ask for gallery placeholders, attach a live preview agent, and deliver
+  background `URLSession` completions.
+- **Process lifecycle goes through RunningBoard, not classic
+  ProcessAssertion/NSExtensionContext**: `WidgetKit.
+  ExtensionSessionFactory.makeSession(for:requiresUserInteractive:
+  priority:watchdogTimeoutProvider:suspensionObserver:completion:)`
+  (sync @ `0x1c101573c`, async variant @ `0x1c1015824`) constructs the
+  session and hands back an `ExtensionSessionAssertionInvalidatable`/
+  `ExtensionSessionSuspensionObserving` pair, both witnessing a real
+  `RBSAssertion` (`RunningBoardServices.framework`, also directly
+  `__TEXT`-referenced) — i.e. the widget extension process is kept alive
+  via a genuine RunningBoard assertion for the duration of a session, with
+  an explicit `DefaultWatchdogTimeoutProvider` for the timeout case, not
+  the older `NSExtensionContext`/backboardd assertion style this project's
+  `inferno_widget_host.m` prototype was built around.
+- **A runtime self-check exists and is a plausible instrumentation/gating
+  point**: `+[WidgetExtensionChecker isExtensionSubsystemInitialized]`
+  (Objective-C class method, found via the local-symbols table, not
+  exported) @ `0x1c0fc1394`, backing the exported
+  `_OBJC_CLASS_$_WidgetExtensionChecker` @ `0x1deac5508`. Worth
+  breakpointing live in a future session to see exactly when/how often
+  it's actually called and what gates on its result.
+- Corroborating structural evidence from the local-symbols table (1196
+  entries, no `ipsw` needed to enumerate them either): a concrete
+  Objective-C-backed class `WidgetKit._WidgetExtensionSession`
+  (`__TtC9WidgetKit23_WidgetExtensionSession`), conforming to a
+  `WidgetExtensionSession` protocol, built by
+  `WidgetExtensionSessionFactory` — names match the exported
+  `ExtensionSessionFactory`/`ExtensionSessionOperation` surface above
+  exactly, i.e. two independent symbol sources (exports trie, local nlist
+  table) tell the same consistent story.
+
+**Net assessment for the widget-hosting thread**: this confirms, in much
+more concrete detail than the prior session's binary-structure inference
+alone could, that `inferno_widget_host.m`'s current design
+(`NSExtensionMain`-entry ObjC principal class) is fundamentally the wrong
+shape for a real WidgetKit extension in this build. A viable replacement
+prototype would need: a real compiled `main()` calling something
+equivalent to `WidgetBundle.main()`'s role, an `NSXPCListener` implementing
+`ExtensionToHostXPCInterface` and consuming `HostToExtensionXPCInterface`
+calls for at least `getDescriptors`/`getTimeline` (the two that matter for
+getting *any* widget content rendered), and a `com.apple.chronod`-reachable
+mach service (whether that means chronod actually launches the extension
+process on demand the way `launchd`/RunningBoard normally does, or expects
+the extension to already be running and just connects to it, is still
+open — the exact bootstrap trigger wasn't traced this session).
+
+### Concrete next steps for whoever picks this up
+
+1. **Disassemble `WidgetBundle.main()` @ `0x1c100957c`** and
+   `ExtensionSessionFactory.makeSession` @ `0x1c101573c` (both now
+   trivially locatable via `dsc_parse.py addr2sym`/reading the raw bytes
+   at their file offset via `DSC.vm_to_file`) to nail down the *exact*
+   bootstrap order: does the extension process create the `NSXPCListener`
+   itself and somehow publish its endpoint, or does `chronod` launch it
+   with a listener endpoint already handed to it via `xpc_connection_
+   create_mach_service` on `com.apple.chronod`? This is the one remaining
+   structural unknown blocking a real `inferno_widget_host` rewrite.
+2. **Symbolicate the pre-`main()` dyld crash** (the dyld-crash-
+   investigation section above) using this same parser once
+   `/usr/lib/dyld` itself is obtained (via the APFS-copy-then-`fsapfsmount`
+   route described above, since it's a standalone Mach-O, not
+   DSC-resident) — `dsc_parse.py`'s Mach-O load-command walk and export/
+   local-symbol logic apply directly to a standalone dylib too (just skip
+   the DSC-header/mapping layer and treat the whole file as one "mapping").
+3. **QuartzCore's private Metal-vs-software backend-selection logic** (the
+   backboardd investigation's "chase the QuartzCore-internal angle" next
+   step) is now equally tractable with this same tool —
+   `dsc_parse.py images QuartzCore` to find the image, then
+   `dump-exports`/local-symbol dump the same way this session did for
+   WidgetKit. Not attempted this session — picked WidgetKit instead since
+   it's directly unblocking for the concurrent live-hosting thread.
+4. `dsc_parse.py` currently only handles the "flat-ish" per-mapping cache
+   layout this specific iOS 14 cache uses (4 mappings, classic
+   `dyld_cache_image_info` list, non-split single file). It has **not**
+   been tested against (and would need extension for) the post-iOS16
+   split-subcache format if this project ever moves to a newer guest
+   image — not a concern for the current T8030/iOS 14 target.
+
+**Environment note**: this entire session was host-side/offline file
+reads (the DSC file already on disk, plus GitHub source fetches) and local
+`git` operations only. Zero interaction with the live guest's serial
+console, QMP socket, or GDB port, and zero interaction with
+`InfernoData/root`, confirmed throughout by construction (no tool in this
+session's history touches ports 4444/1234 or that path).
