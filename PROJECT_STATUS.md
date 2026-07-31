@@ -1131,6 +1131,75 @@ back up:
 (none on this final boot), QMP `info status` confirmed `running`, no GDB
 session left attached or breakpoints left armed.
 
+### UPDATE 2026-07-31 (new session): active GUI-tap trigger tried against
+### Maps.app itself — clean negative result, narrows the search
+
+Picked up on the same QEMU instance (pid unchanged, up since this session's
+own boot, no restart needed — confirmed `/sigkill_test` →
+`Segmentation fault: 11` and `/compute_test` → `result = 42` both clean
+before touching anything). Found the previous session's own uncommitted,
+unfinished work already sitting in `guest_tools/`: `qmp_raw.py` (raw QMP
+client with `screendump`/`tap`/`swipe` helpers — `swipe()` is a real
+multi-step held drag, not the earlier single-jump attempt that only got
+"just short of a full unlock") and `tap_maps_watch.py` (arms all 10 sandbox
+vnode-check candidates + the 6-address block_invoke chain +
+`handle_user_abort`/`exception_triage` simultaneously, fires a QMP tap, then
+watches a bounded window) — exactly the tool `NEXT_SESSION_PROMPT.md`
+described an interrupted background agent as having been mid-build on.
+Neither file had been run to a documented conclusion or committed; both are
+committed now, alongside this update.
+
+Screendump showed the guest already sitting on the home screen (not
+locked), with a "Доступно обновление iOS" alert covering part of the
+screen — dismissed via a direct tap on "Закрыть" (confirmed via a
+follow-up screendump), then confirmed the Maps icon's actual on-screen
+position (screendump-cropped, center ≈ (320, 440) in the 828×1792 frame)
+matches `tap_maps_watch.py`'s own hardcoded default almost exactly — the
+previous session had already calibrated this correctly against a real
+screenshot.
+
+Ran `tap_maps_watch.py 200 320 440 Maps` (200s wall-clock deadline, all 18
+breakpoints armed first, tap fired 3s in). **Clean run, no tooling
+issues**: 2090 rounds, all 18 breakpoints cleanly armed/removed, QMP `cont`
+confirmed at the end (`RESUME` event observed). **Result: zero sandbox
+denies, zero block_invoke-chain hits, zero `exception_triage` hits, and —
+notably — zero crash** (unlike the previous session's observed-but-
+uncorrelated Maps-crash-on-tap). 99 `handle_user_abort` hits, all ordinary/
+benign dyld lazy-binding page faults (same signature already characterized
+in the `agx_system_metal_test` investigation below), spread across what's
+almost certainly Maps.app's own real startup work (fault addresses cluster
+in a handful of distinct private-mapping ranges, consistent with the app
+image + its own dylibs loading) — i.e. **Maps.app genuinely launched and
+ran real code this time, didn't crash, and never once called
+`MTLCreateSystemDefaultDevice()`.**
+
+**A real, useful negative finding, not a null result**: tapping the Maps
+app icon (launching the full app to its default view) is *not* the same
+trigger as the widget's snapshot-refresh cycle. The two already-documented
+historical dmesg hits were specifically from
+`com.apple.MapKit.SnapshotService.xpc` — a distinct, on-demand XPC service
+MapKit spins up specifically to render a map snapshot image (for the
+Today-View widget), not something the main Maps.app process does merely by
+launching to its default view. This may also explain why the earlier
+session's Maps-crash-on-tap didn't recur here: plausibly tied to a
+*specific* in-app action (e.g. panning/searching, which would need to
+actually fetch/render live map tiles) rather than simple app launch — this
+session's tap never went further than the default launch screen.
+
+**Narrows the next step to the doc's own already-identified "most
+reliable" option**: since neither passive widget-timing windows nor an
+active full-app-launch tap reach the target code path, and MapKit's own
+snapshot XPC service is specifically what's needed, the highest-confidence
+remaining path is next-step 2 from the section above — a small, dedicated
+CI-built test app that calls the real public `MKMapSnapshotter` API
+directly, guaranteeing the exact trigger on demand instead of depending on
+SpringBoard's widget-scheduling nondeterminism or guessing at in-app UI
+gestures.
+
+Environment left clean by the script's own `finally` block: all 18
+breakpoints removed, QMP `cont` issued and confirmed (`RESUME` event seen),
+no dangling paused state.
+
 ## `agx_system_metal_test` crash investigation (2026-07-30)
 
 This is the direct answer to the open question this section used to end
@@ -2383,3 +2452,20 @@ still gets killed.
   debugging; **always wrap usage in try/finally calling `qmp_cont()`** — a
   dangling paused VM from a crashed/interrupted debug script is a real
   failure mode that has happened more than once.
+- `qmp_raw.py` — native QMP client (not just HMP passthrough like
+  `qmp_client.py`) with `screendump`/`tap`/`swipe`/`status` helpers, for
+  driving the emulated touchscreen (`hw/arm/apple-silicon/mt-spi.c` via
+  `input-send-event`, abs range `0..0x7FFF` over the display's real
+  828×1792 pixel dimensions). `swipe()` does a real multi-step held drag
+  (not a single jump) since the touch device reconstructs gestures from a
+  stream of intermediate positions. Importable (`from qmp_raw import QMP`)
+  or standalone (`qmp_raw.py screendump|tap|swipe|status ...`).
+- `tap_maps_watch.py <deadline_s> <x> <y> <label>` — arms the 10 sandbox
+  vnode-check candidates from the MapKit `/b` investigation, the 6-address
+  `MTLCreateSystemDefaultDevice`/block_invoke chain, and
+  `handle_user_abort`/`exception_triage`, all at once, fires a QMP tap at
+  `(x, y)` 3s in, then watches every hit until `deadline_s` elapses,
+  writing a JSON summary to `tap_watch_summary_<label>.json`
+  (gitignored). Reusable template for "arm breakpoints, trigger an action,
+  watch a bounded window" — swap in different candidate sets/trigger
+  actions for other investigations.
