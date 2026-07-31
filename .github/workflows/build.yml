@@ -442,6 +442,17 @@ jobs:
           echo "--- exported symbols (need inferno_present_struct) ---"
           nm -gU out8/bash_present_builtin.dylib
 
+      - name: "Compile mapkit_snapshotter_test.m (MKMapSnapshotter direct trigger -- deterministic on-demand replacement for waiting on/guessing at com.apple.MapKit.SnapshotService.xpc's own snapshot-refresh cycle, see PROJECT_STATUS.md's MapKit /b sandbox-deny investigation; linking MapKit is new for this project)"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -target arm64e-apple-ios14.0 -isysroot "$SDK" -fobjc-arc \
+            -framework Foundation -framework MapKit \
+            -o out8/mapkit_snapshotter_test src/userspace_test/mapkit_snapshotter_test.m
+          file out8/mapkit_snapshotter_test
+          otool -L out8/mapkit_snapshotter_test
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
