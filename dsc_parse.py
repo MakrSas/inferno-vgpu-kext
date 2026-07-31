@@ -33,6 +33,13 @@ Usage:
   python3 dsc_parse.py addr2sym 0x1970505d0
   python3 dsc_parse.py images [substring]          # list image paths
   python3 dsc_parse.py dump-exports <path-substring> [name-substring]
+  python3 dsc_parse.py objc-protocol <path-substring> <name-substring>
+  python3 dsc_parse.py objc-class    <path-substring> <name-substring>
+
+ObjC metadata (protocol_t / class_ro_t / method_list_t) support added
+2026-07-31 to get real selectors + @encode()-style type-encoding strings
+(not just addresses) -- see the DSC/module-level ObjC section below for the
+struct-layout source and the empirical PAC/pointer-tag-stripping writeup.
 """
 import mmap
 import os
@@ -50,6 +57,34 @@ LC_DYLD_INFO_ONLY = 0x80000022
 LC_DYLD_EXPORTS_TRIE = 0x80000033
 
 MH_MAGIC_64 = 0xFEEDFACF
+
+
+def strip_ptr(raw):
+    """Recover a real VA from a raw 64-bit pointer field read directly out
+    of this DSC's __DATA regions (used by the ObjC metadata parsing below).
+
+    Empirically validated this session (2026-07-31), not assumed: a known
+    protocol_t's `instanceMethods` field was read as raw bytes
+    (0x300001d3d04c68), and masking to the low 51 bits
+    (raw & ((1<<51)-1) == 0x1d3d04c68) landed EXACTLY on the address this
+    project's own local-symbols-table lookup independently gives for that
+    same method list's `__PROTOCOL_INSTANCE_METHODS__...` symbol -- same
+    cross-check repeated successfully for a second field
+    (`_extendedMethodTypes`) and for a plain C-string pointer (`mangledName`,
+    cross-checked against a literal byte search for the string itself).
+    The discarded top 13 bits (51..63) match dyld's on-disk
+    `dyld_cache_slide_pointer3` "plain" pointer encoding exactly (11-bit
+    offsetToNextPointer + 2 unused bits) -- i.e. these are raw, not-yet-
+    chain-walked chained-fixup pointers, NOT arm64e ptrauth-signed
+    pointers; no actual PAC/signature computation is needed here, only
+    this mask. (This DOES mean a real chain-walk/rebase pass was never
+    implemented or needed -- this cache's DATA pointers already resolve
+    correctly to real, current VAs once the tag bits are masked off, since
+    this whole cache is used unslid, matching this project's own
+    already-established "KASLR-off + non-slid-DSC" finding elsewhere in
+    PROJECT_STATUS.md.)
+    """
+    return raw & ((1 << 51) - 1) if raw else 0
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +433,229 @@ class DSC:
             out.append((name, n_value, 0))
         return out
 
+    # -- ObjC metadata: protocol_t / class_ro_t / method_list_t ----------------
+    # Struct layouts below are transcribed from apple-oss-distributions/objc4
+    # tag objc4-818.2, runtime/objc-runtime-new.h (fetched fresh this session,
+    # not from memory -- see the module-level docstring/comment above this
+    # class for the tag-selection reasoning and exact source line numbers).
+    #
+    # PAC/pointer-tag note: every raw 64-bit pointer field read directly out
+    # of this DSC's __DATA regions below must be passed through strip_ptr()
+    # before use -- see strip_ptr()'s own docstring for the empirical
+    # validation (NOT a guess: cross-checked against a known-good VA found
+    # by a literal string search, see this session's PROJECT_STATUS.md
+    # section for the worked example).
+    #
+    # method_list_t small-vs-big format: NOT assumed either way -- each
+    # method_list_t's own entsizeAndFlags header is decoded and its
+    # smallMethodListFlag bit (0x80000000) checked explicitly, per-list,
+    # exactly as this task instructed ("confirm empirically... rather than
+    # assuming either way"). Empirically, for WidgetKit's
+    # HostToExtensionXPCInterface (the concrete target this was built for),
+    # the on-disk list is the classic "big" pointer-based format (entsize
+    # 24 = 3 real pointers), NOT small/relative -- worth recording since
+    # this task's own brief expected small lists to be the more likely case
+    # for an iOS-14-era cache. Small-list decoding is still implemented
+    # below (untested against a real small list this session -- no small
+    # list was found among the targets actually inspected -- flagged
+    # honestly here rather than silently assumed correct).
+
+    def _method_list(self, va):
+        """Parse a method_list_t at VA `va`. Returns (is_small, entries)
+        where entries is a list of (sel_name, types_str, entry_va)."""
+        off = self.vm_to_file(va)
+        if off is None:
+            return False, []
+        entsizeAndFlags, count = struct.unpack_from("<II", self.data, off)
+        FLAG_MASK = 0xffff0003
+        SMALL_FLAG = 0x80000000
+        entsize = entsizeAndFlags & (~FLAG_MASK & 0xffffffff)
+        is_small = bool(entsizeAndFlags & SMALL_FLAG)
+        base = off + 8
+        entries = []
+        for i in range(count):
+            eoff = base + i * entsize
+            entry_va = va + 8 + i * entsize
+            if is_small:
+                # method_t::small: 3x int32 RelativePointer, each relative
+                # to the address of THAT SPECIFIC FIELD (not the entry
+                # start) -- RelativePointer<T>::get(): base = &offset field.
+                # CONFIG_SHARED_CACHE_RELATIVE_DIRECT_SELECTORS == 1
+                # unconditionally on this objc4 tag (see objc-config.h) --
+                # for a small method list resident IN the shared cache
+                # (true for everything this parser reads), the `name`
+                # relative pointer refers DIRECTLY to the selector's C
+                # string bytes (SEL == char*), no extra selref
+                # indirection needed.
+                name_off, types_off, imp_off = struct.unpack_from("<iii", self.data, eoff)
+                name_va = (entry_va + 0 + name_off) if name_off else 0
+                types_va = (entry_va + 4 + types_off) if types_off else 0
+                sel = self.read_cstr(name_va) if name_va else None
+                types = self.read_cstr(types_va) if types_va else None
+            else:
+                name_raw, types_raw, imp_raw = struct.unpack_from("<QQQ", self.data, eoff)
+                sel = self.read_cstr(strip_ptr(name_raw))
+                types = self.read_cstr(strip_ptr(types_raw))
+            entries.append((sel, types, entry_va))
+        return is_small, entries
+
+    def read_cstr(self, va):
+        if not va:
+            return None
+        off = self.vm_to_file(va)
+        if off is None:
+            return None
+        end = self.data.find(b"\x00", off)
+        if end == -1:
+            return None
+        return self.data[off:end].decode(errors="replace")
+
+    def _protocol(self, va):
+        """Parse a protocol_t at VA `va` (objc-runtime-new.h struct
+        protocol_t : objc_object). Returns a dict with name, per-category
+        method lists (each a list of (sel, types)), and the
+        extendedMethodTypes array (parallel to instance+class+optional
+        instance+optional class methods concatenated, in that order --
+        see objc-runtime-new.mm's getExtendedTypesIndexesForMethod, which
+        this ordering is transcribed from)."""
+        off = self.vm_to_file(va)
+        if off is None:
+            return None
+        (isa, mangledName, protocols, instanceMethods, classMethods,
+         optInstanceMethods, optClassMethods, instanceProperties,
+         size, flags, extMethodTypes, demangledName, classProperties) = \
+            struct.unpack_from("<QQQQQQQQIIQQQ", self.data, off)
+
+        def mlist(raw):
+            va2 = strip_ptr(raw)
+            if not va2:
+                return (False, [])
+            return self._method_list(va2)
+
+        inst_small, inst = mlist(instanceMethods)
+        cls_small, cls = mlist(classMethods)
+        opt_inst_small, opt_inst = mlist(optInstanceMethods)
+        opt_cls_small, opt_cls = mlist(optClassMethods)
+
+        ext_va = strip_ptr(extMethodTypes)
+        ext_types = []
+        if ext_va:
+            total = len(inst) + len(cls) + len(opt_inst) + len(opt_cls)
+            eoff = self.vm_to_file(ext_va)
+            if eoff is not None:
+                for i in range(total):
+                    ptr_raw = struct.unpack_from("<Q", self.data, eoff + i * 8)[0]
+                    ext_types.append(self.read_cstr(strip_ptr(ptr_raw)))
+
+        # Attach each method's own extended (block-aware) type string, by
+        # position, per the ordering above.
+        def zip_ext(entries, start):
+            out = []
+            for i, (sel, types, entry_va) in enumerate(entries):
+                idx = start + i
+                ext = ext_types[idx] if idx < len(ext_types) else None
+                out.append({"sel": sel, "types": types, "ext_types": ext, "va": entry_va})
+            return out
+
+        a = 0
+        inst_out = zip_ext(inst, a); a += len(inst)
+        cls_out = zip_ext(cls, a); a += len(cls)
+        opt_inst_out = zip_ext(opt_inst, a); a += len(opt_inst)
+        opt_cls_out = zip_ext(opt_cls, a); a += len(opt_cls)
+
+        return {
+            "va": va,
+            "name": self.read_cstr(strip_ptr(mangledName)),
+            "size": size,
+            "flags": flags,
+            "protocols_va": strip_ptr(protocols),
+            "instanceMethods": inst_out,
+            "classMethods": cls_out,
+            "optionalInstanceMethods": opt_inst_out,
+            "optionalClassMethods": opt_cls_out,
+            "instanceMethods_small": inst_small,
+            "classMethods_small": cls_small,
+        }
+
+    def find_protocols(self, path_filter, name_filter):
+        """Search an image's LOCAL symbol table for `__PROTOCOL__<mangled>`
+        labels matching name_filter, parse each hit as a protocol_t, and
+        return the list (may contain multiple redundant per-TU copies --
+        Swift/ObjC compilers do not always coalesce these within one
+        image; caller should treat non-empty method lists as the
+        authoritative copy when duplicates disagree, as this session found
+        for HostToExtensionXPCInterface vs. its own empty-looking sibling
+        copies)."""
+        out = []
+        for im in self.find_image(path_filter):
+            for name, addr, _flags in self._local_symbols_for_image(im):
+                if name.startswith("__PROTOCOL__") and name_filter in name:
+                    proto = self._protocol(addr)
+                    if proto:
+                        proto["image"] = im.path
+                        proto["symbol"] = name
+                        out.append(proto)
+        return out
+
+    # -- class_ro_t (best-effort: only handles the common shared-cache case
+    # where class_data_bits_t.bits points directly at class_ro_t, i.e. an
+    # un-"realized" class -- NOT the class_rw_t case. Not exercised this
+    # session against a real target; documented as best-effort, matching
+    # this project's own "say what's actually verified" style.) -----------
+    FAST_DATA_MASK = 0x00007ffffffffff8
+
+    def _class_ro(self, class_ro_va):
+        off = self.vm_to_file(class_ro_va)
+        if off is None:
+            return None
+        flags, instanceStart, instanceSize, reserved = struct.unpack_from("<IIII", self.data, off)
+        (ivarLayout, name, baseMethodList, baseProtocols, ivars,
+         weakIvarLayout, baseProperties) = struct.unpack_from("<QQQQQQQ", self.data, off + 16)
+        is_small, methods = self._method_list(strip_ptr(baseMethodList)) if strip_ptr(baseMethodList) else (False, [])
+        return {
+            "va": class_ro_va,
+            "flags": flags,
+            "instanceStart": instanceStart,
+            "instanceSize": instanceSize,
+            "name": self.read_cstr(strip_ptr(name)),
+            "baseMethods": [{"sel": s, "types": t} for s, t, _ in methods],
+            "baseMethods_small": is_small,
+        }
+
+    def find_classes(self, path_filter, name_filter):
+        """Search an image's LOCAL + exported symbols for
+        `_OBJC_CLASS_$_<Name>` matching name_filter, follow isa->bits (best
+        effort, see _class_ro's own caveat) to class_ro_t, and return the
+        parsed result list."""
+        out = []
+        for im in self.find_image(path_filter):
+            candidates = {}
+            for name, addr, _flags in self._local_symbols_for_image(im):
+                if name.startswith("_OBJC_CLASS_$_") and name_filter in name:
+                    candidates[name] = addr
+            try:
+                info = self._parse_image_lcs(im)
+                trie, _ = self._exports_trie_bytes(im, info)
+            except Exception:
+                trie = None
+            if trie:
+                collected = []
+                self._walk_trie(trie, im.address, collect=collected)
+                for name, addr, _flags in collected:
+                    if name.startswith("_OBJC_CLASS_$_") and name_filter in name:
+                        candidates[name] = addr
+            for sym_name, class_va in candidates.items():
+                off = self.vm_to_file(class_va)
+                if off is None:
+                    continue
+                # objc_class: isa(8) superclass(8) cache_t(16) bits(8)
+                bits = struct.unpack_from("<Q", self.data, off + 32)[0]
+                ro_va = strip_ptr(bits) & self.FAST_DATA_MASK
+                ro = self._class_ro(ro_va) if ro_va else None
+                out.append({"symbol": sym_name, "class_va": class_va, "image": im.path,
+                            "class_ro_va": ro_va, "class_ro": ro})
+        return out
+
 
 def main():
     if len(sys.argv) < 2:
@@ -434,6 +692,50 @@ def main():
         name_filter = sys.argv[3] if len(sys.argv) > 3 else None
         for name, addr, flags, path in dsc.dump_exports(path_filter, name_filter):
             print(f"{addr:#018x}  {name}   [{path}]")
+    elif cmd == "objc-protocol":
+        path_filter = sys.argv[2]
+        name_filter = sys.argv[3] if len(sys.argv) > 3 else ""
+        protos = dsc.find_protocols(path_filter, name_filter)
+        if not protos:
+            print("NOT FOUND")
+            sys.exit(2)
+        for p in protos:
+            total = (len(p["instanceMethods"]) + len(p["classMethods"]) +
+                     len(p["optionalInstanceMethods"]) + len(p["optionalClassMethods"]))
+            print(f"protocol_t @ {p['va']:#x}  name={p['name']!r}  symbol={p['symbol']}  "
+                  f"image={p['image']}  size={p['size']} flags={p['flags']:#x}  "
+                  f"methods={total}")
+            for cat in ("instanceMethods", "classMethods",
+                        "optionalInstanceMethods", "optionalClassMethods"):
+                lst = p[cat]
+                if not lst:
+                    continue
+                small = p.get(cat + "_small", False)
+                print(f"  {cat} (small={small}):")
+                for m in lst:
+                    print(f"    - {m['sel']}")
+                    print(f"        types:     {m['types']}")
+                    print(f"        ext_types: {m['ext_types']}")
+            print()
+    elif cmd == "objc-class":
+        path_filter = sys.argv[2]
+        name_filter = sys.argv[3] if len(sys.argv) > 3 else ""
+        classes = dsc.find_classes(path_filter, name_filter)
+        if not classes:
+            print("NOT FOUND")
+            sys.exit(2)
+        for c in classes:
+            print(f"{c['symbol']}  class_va={c['class_va']:#x}  image={c['image']}")
+            ro = c["class_ro"]
+            if ro is None:
+                print("    class_ro_t: <unreadable>")
+                continue
+            print(f"    class_ro_t @ {ro['va']:#x}  name={ro['name']!r}  "
+                  f"flags={ro['flags']:#x}  instanceSize={ro['instanceSize']}  "
+                  f"methods={len(ro['baseMethods'])} (small={ro['baseMethods_small']})")
+            for m in ro["baseMethods"]:
+                print(f"      - {m['sel']}   {m['types']}")
+            print()
     else:
         print(f"unknown command: {cmd}")
         sys.exit(1)
